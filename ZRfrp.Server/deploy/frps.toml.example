@@ -1,0 +1,28 @@
+bindAddr = "0.0.0.0"
+bindPort = 7000
+
+# 请在安装后替换为随机生成的强 Token。
+auth.method = "token"
+auth.token = "CHANGE_ME"
+
+# Dashboard 仅供 ZRfrp Server 在本机读取，不暴露到公网。
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+webServer.user = "zrfrp"
+webServer.password = "CHANGE_ME"
+enablePrometheus = true
+
+# 必须与 appsettings.json 中的自动分配范围一致。
+allowPorts = [
+  { start = 20000, end = 40000 }
+]
+
+[[httpPlugins]]
+name = "zrfrp-policy"
+addr = "127.0.0.1:7600"
+path = "/frp-plugin"
+ops = ["Login", "NewProxy", "CloseProxy", "Ping"]
+
+log.to = "/var/log/zrfrp/frps.log"
+log.level = "info"
+log.maxDays = 7

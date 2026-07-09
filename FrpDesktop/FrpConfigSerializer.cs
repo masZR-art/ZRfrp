@@ -10,6 +10,8 @@ public static class FrpConfigSerializer
         var builder = new StringBuilder();
         builder.AppendLine($"serverAddr = {Quote(profile.ServerAddr)}");
         builder.AppendLine($"serverPort = {profile.ServerPort.ToString(CultureInfo.InvariantCulture)}");
+        builder.AppendLine($"clientID = {Quote(profile.Id)}");
+        builder.AppendLine($"metadatas.zrfrp_client_id = {Quote(profile.Id)}");
 
         if (!string.IsNullOrWhiteSpace(profile.Token))
         {
@@ -24,6 +26,7 @@ public static class FrpConfigSerializer
             builder.AppendLine($"type = {Quote(proxy.Type.ToLowerInvariant())}");
             builder.AppendLine($"localIP = {Quote(proxy.LocalIP)}");
             builder.AppendLine($"localPort = {proxy.LocalPort.ToString(CultureInfo.InvariantCulture)}");
+            builder.AppendLine($"metadatas.zrfrp_tunnel_id = {Quote(proxy.Id)}");
 
             if (UsesRemotePort(proxy.Type) && proxy.RemotePort > 0)
             {
@@ -33,6 +36,12 @@ public static class FrpConfigSerializer
             if (UsesCustomDomains(proxy.Type) && !string.IsNullOrWhiteSpace(proxy.CustomDomains))
             {
                 builder.AppendLine($"customDomains = {ToTomlArray(proxy.CustomDomains)}");
+            }
+
+            if (!string.IsNullOrWhiteSpace(proxy.BandwidthLimit))
+            {
+                builder.AppendLine($"transport.bandwidthLimit = {Quote(proxy.BandwidthLimit)}");
+                builder.AppendLine("transport.bandwidthLimitMode = \"server\"");
             }
         }
 
@@ -149,6 +158,9 @@ public static class FrpConfigSerializer
                 break;
             case "customDomains":
                 proxy.CustomDomains = FromTomlArray(value);
+                break;
+            case "transport.bandwidthLimit":
+                proxy.BandwidthLimit = Unquote(value);
                 break;
         }
     }

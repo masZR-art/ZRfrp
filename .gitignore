@@ -23,6 +23,7 @@ diag-*
 *.temp
 
 # Release artifacts
+release/
 *.zip
 *.7z
 *.rar

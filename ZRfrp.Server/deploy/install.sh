@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPOSITORY="${ZRFRP_REPOSITORY:-3317603015whw-art/ZRfrp}"
+VERSION="${ZRFRP_VERSION:-latest}"
+FRP_VERSION="${FRP_VERSION:-0.69.1}"
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "请使用 root 运行此安装脚本。" >&2
+  exit 1
+fi
+
+case "$(uname -m)" in
+  x86_64|amd64) RID="linux-x64"; FRP_ARCH="amd64" ;;
+  aarch64|arm64) RID="linux-arm64"; FRP_ARCH="arm64" ;;
+  *) echo "暂不支持的架构: $(uname -m)" >&2; exit 1 ;;
+esac
+
+command -v curl >/dev/null || { echo "需要先安装 curl。" >&2; exit 1; }
+command -v tar >/dev/null || { echo "需要先安装 tar。" >&2; exit 1; }
+
+if [[ "${VERSION}" == "latest" ]]; then
+  RELEASE_URL="https://github.com/${REPOSITORY}/releases/latest/download/zrfrp-server-${RID}.tar.gz"
+else
+  RELEASE_URL="https://github.com/${REPOSITORY}/releases/download/${VERSION}/zrfrp-server-${RID}.tar.gz"
+fi
+FRP_URL="https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_${FRP_ARCH}.tar.gz"
+
+id -u zrfrp >/dev/null 2>&1 || useradd --system --home /var/lib/zrfrp --shell /usr/sbin/nologin zrfrp
+install -d -o zrfrp -g zrfrp /opt/zrfrp/server /etc/zrfrp /var/lib/zrfrp /var/log/zrfrp
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "${TMP}"' EXIT
+curl --fail --location --retry 3 "${RELEASE_URL}" -o "${TMP}/server.tar.gz"
+tar -xzf "${TMP}/server.tar.gz" -C /opt/zrfrp/server
+chmod 0755 /opt/zrfrp/server/zrfrp-server
+
+curl --fail --location --retry 3 "${FRP_URL}" -o "${TMP}/frp.tar.gz"
+tar -xzf "${TMP}/frp.tar.gz" -C "${TMP}"
+install -m 0755 "${TMP}/frp_${FRP_VERSION}_linux_${FRP_ARCH}/frps" /opt/zrfrp/frps
+
+if [[ -f /etc/zrfrp/zrfrp.env ]]; then
+  # shellcheck disable=SC1091
+  source /etc/zrfrp/zrfrp.env
+fi
+ADMIN_PASSWORD="${ZRFRP_ADMIN_PASSWORD:-$(openssl rand -base64 18 | tr -d '/+=')}"
+CLIENT_KEY="${ZRFRP_CLIENT_API_KEY:-$(openssl rand -hex 32)}"
+FRP_TOKEN="${ZRFRP_FRP_TOKEN:-$(openssl rand -hex 24)}"
+DASHBOARD_PASSWORD="$(openssl rand -hex 18)"
+
+if [[ ! -f /etc/zrfrp/frps.toml ]]; then
+  cp /opt/zrfrp/server/deploy/frps.toml.example /etc/zrfrp/frps.toml
+  sed -i "0,/CHANGE_ME/s//${FRP_TOKEN}/" /etc/zrfrp/frps.toml
+  sed -i "0,/CHANGE_ME/s//${DASHBOARD_PASSWORD}/" /etc/zrfrp/frps.toml
+fi
+
+cat >/etc/zrfrp/zrfrp.env <<EOF
+ZRFRP_ADMIN_PASSWORD=${ADMIN_PASSWORD}
+ZRFRP_CLIENT_API_KEY=${CLIENT_KEY}
+EOF
+chmod 0600 /etc/zrfrp/zrfrp.env
+
+SYSTEMCTL_PATH="$(command -v systemctl)"
+SUDO_PATH="$(command -v sudo || true)"
+if [[ -z "${SUDO_PATH}" ]]; then
+  echo "需要 sudo 来授权面板执行受限的 frps 服务操作。" >&2
+  exit 1
+fi
+cat >/etc/sudoers.d/zrfrp <<EOF
+zrfrp ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} start zrfrp-frps, ${SYSTEMCTL_PATH} stop zrfrp-frps, ${SYSTEMCTL_PATH} restart zrfrp-frps
+EOF
+chmod 0440 /etc/sudoers.d/zrfrp
+
+if [[ ! -f /opt/zrfrp/server/appsettings.Production.json ]]; then
+  PUBLIC_HOST="$(curl -4 --fail --silent --max-time 4 https://api.ipify.org || hostname -I | awk '{print $1}')"
+  cat >/opt/zrfrp/server/appsettings.Production.json <<EOF
+{
+  "ZRfrp": {
+    "PublicHost": "${PUBLIC_HOST}",
+    "FrpsDashboardPassword": "${DASHBOARD_PASSWORD}"
+  }
+}
+EOF
+fi
+
+cp /opt/zrfrp/server/deploy/zrfrp-server.service /etc/systemd/system/
+cp /opt/zrfrp/server/deploy/zrfrp-frps.service /etc/systemd/system/
+chown -R zrfrp:zrfrp /opt/zrfrp /var/lib/zrfrp /var/log/zrfrp
+chown root:zrfrp /etc/zrfrp
+chmod 0770 /etc/zrfrp
+chmod 0660 /etc/zrfrp/frps.toml
+chmod 0640 /opt/zrfrp/server/appsettings.Production.json
+
+systemctl daemon-reload
+systemctl enable --now zrfrp-server zrfrp-frps
+
+echo
+echo "ZRfrp Server 已安装。"
+echo "面板地址: http://${PUBLIC_HOST}:7600"
+echo "管理员密码: ${ADMIN_PASSWORD}"
+echo "客户端 API Key: ${CLIENT_KEY}"
+echo "frp Token: ${FRP_TOKEN}"
+echo "请立即保存以上凭据，并通过防火墙或 HTTPS 反向代理保护 7600 端口。"

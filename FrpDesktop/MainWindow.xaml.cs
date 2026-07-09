@@ -38,6 +38,7 @@ public partial class MainWindow : Window
 
     private readonly AppSettingsStore _store = new();
     private readonly FrpProcessRunner _runner = new();
+    private readonly ZRfrpControlClient _controlClient = new();
     private readonly StringBuilder _logBuffer = new();
     private readonly FrpEnvironmentService _environmentService;
     private readonly HashSet<string> _announcedProxyAddresses = new(StringComparer.OrdinalIgnoreCase);
@@ -931,7 +932,7 @@ public partial class MainWindow : Window
         ProxiesList.Items.Refresh();
     }
 
-    private void SaveProxyEdit_Click(object sender, RoutedEventArgs e)
+    private async void SaveProxyEdit_Click(object sender, RoutedEventArgs e)
     {
         ProxyEditorErrorText.Text = "";
 
@@ -947,12 +948,19 @@ public partial class MainWindow : Window
                     throw new InvalidOperationException("请选择部署节点。");
                 }
 
+                targetProfile = await ApplyBestServerAllocationAsync(targetProfile, editedProxy);
                 targetProfile.Proxies.Add(editedProxy);
                 ProfilesList.SelectedItem = targetProfile;
                 ProxiesList.SelectedItem = editedProxy;
             }
             else if (_editingProxy is not null)
             {
+                var targetProfile = ProxyProfileComboBox.SelectedItem as FrpProfile ?? _selectedProfile
+                    ?? throw new InvalidOperationException("找不到隧道所属节点。");
+                editedProxy.Id = _editingProxy.Id;
+                editedProxy.AllocationId = _editingProxy.AllocationId;
+                editedProxy.RemotePortLocked = _editingProxy.RemotePortLocked;
+                await ApplyServerAllocationAsync(targetProfile, editedProxy);
                 CopyProxyValues(_editingProxy, editedProxy);
                 ProxiesList.Items.Refresh();
             }
@@ -971,6 +979,18 @@ public partial class MainWindow : Window
     private void CancelProxyEdit_Click(object sender, RoutedEventArgs e)
     {
         CloseOpenDialogs();
+    }
+
+    private void ProxyProfileComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ProxyRemotePortTextBox is null || ProxyProfileComboBox.SelectedItem is not FrpProfile profile)
+        {
+            return;
+        }
+        ProxyRemotePortTextBox.IsReadOnly = profile.ServerManaged || _editingProxy?.RemotePortLocked == true;
+        ProxyRemotePortTextBox.ToolTip = ProxyRemotePortTextBox.IsReadOnly
+            ? "远程端口由 ZRfrp Server 自动分配，保存后不可修改。"
+            : null;
     }
 
     private void SaveNodeSettings_Click(object sender, RoutedEventArgs e)
@@ -1116,6 +1136,9 @@ public partial class MainWindow : Window
         NodeServerAddrTextBox.Text = profile.ServerAddr;
         NodeServerPortTextBox.Text = profile.ServerPort.ToString();
         NodeTokenPasswordBox.Password = profile.Token;
+        NodeServerManagedCheckBox.IsChecked = profile.ServerManaged;
+        NodeControlApiUrlTextBox.Text = profile.ControlApiUrl;
+        NodeControlApiKeyPasswordBox.Password = profile.ControlApiKey;
         NodeFrpcPathTextBox.Text = profile.FrpcPath;
         NodeGeneratedConfigTextBox.Text = _store.GetGeneratedConfigPath(profile);
 
@@ -1141,6 +1164,20 @@ public partial class MainWindow : Window
         profile.ServerPort = serverPort;
         profile.FrpcPath = frpcPath;
         profile.Token = NodeTokenPasswordBox.Password;
+        profile.ServerManaged = NodeServerManagedCheckBox.IsChecked == true;
+        profile.ControlApiUrl = NodeControlApiUrlTextBox.Text.Trim();
+        profile.ControlApiKey = NodeControlApiKeyPasswordBox.Password;
+        if (profile.ServerManaged)
+        {
+            if (!Uri.TryCreate(profile.ControlApiUrl, UriKind.Absolute, out _))
+            {
+                throw new InvalidOperationException("请填写有效的 ZRfrp Server 控制面板地址。");
+            }
+            if (string.IsNullOrWhiteSpace(profile.ControlApiKey))
+            {
+                throw new InvalidOperationException("托管节点需要填写客户端 API Key。");
+            }
+        }
     }
 
     private async Task DeleteProfileAsync(FrpProfile profile)
@@ -1155,6 +1192,23 @@ public partial class MainWindow : Window
         if (!result)
         {
             return;
+        }
+
+        if (profile.ServerManaged)
+        {
+            foreach (var proxy in profile.Proxies.Where(item => !string.IsNullOrWhiteSpace(item.AllocationId)))
+            {
+                try
+                {
+                    await _controlClient.ReleaseAsync(profile, proxy.AllocationId);
+                }
+                catch (Exception exception)
+                {
+                    AppendLog($"节点租约释放失败：{exception.Message}");
+                    await ShowConfirmAsync("无法删除", "该节点仍有服务端端口租约，请确认控制面板可访问后重试。");
+                    return;
+                }
+            }
         }
 
         var index = _state.Profiles.IndexOf(profile);
@@ -1177,6 +1231,20 @@ public partial class MainWindow : Window
         if (!result)
         {
             return;
+        }
+
+        if (profile.ServerManaged && !string.IsNullOrWhiteSpace(proxy.AllocationId))
+        {
+            try
+            {
+                await _controlClient.ReleaseAsync(profile, proxy.AllocationId);
+            }
+            catch (Exception exception)
+            {
+                AppendLog($"服务端端口租约释放失败：{exception.Message}");
+                await ShowConfirmAsync("无法移除", "服务端端口租约释放失败，请确认控制面板可访问后重试。");
+                return;
+            }
         }
 
         profile.Proxies.Remove(proxy);
@@ -1250,6 +1318,12 @@ public partial class MainWindow : Window
 
         ValidatePort(proxy.LocalPort, $"隧道“{proxy.Name}”的本地端口");
 
+        if (!string.IsNullOrWhiteSpace(proxy.BandwidthLimit)
+            && !Regex.IsMatch(proxy.BandwidthLimit, @"^\d+(KB|MB)$", RegexOptions.IgnoreCase))
+        {
+            throw new InvalidOperationException($"隧道“{proxy.Name}”的带宽限制格式无效，请使用 512KB 或 2MB。");
+        }
+
         if (type is "tcp" or "udp")
         {
             ValidatePort(proxy.RemotePort, $"隧道“{proxy.Name}”的远程端口");
@@ -1311,7 +1385,13 @@ public partial class MainWindow : Window
         ProxyLocalIPTextBox.Text = proxy.LocalIP;
         ProxyLocalPortTextBox.Text = proxy.LocalPort.ToString();
         ProxyRemotePortTextBox.Text = proxy.RemotePort <= 0 ? "" : proxy.RemotePort.ToString();
+        ProxyBandwidthLimitTextBox.Text = proxy.BandwidthLimit;
         ProxyCustomDomainsTextBox.Text = proxy.CustomDomains;
+        var targetProfile = ProxyProfileComboBox.SelectedItem as FrpProfile ?? _selectedProfile;
+        ProxyRemotePortTextBox.IsReadOnly = proxy.RemotePortLocked || targetProfile?.ServerManaged == true;
+        ProxyRemotePortTextBox.ToolTip = ProxyRemotePortTextBox.IsReadOnly
+            ? "远程端口由 ZRfrp Server 自动分配，保存后不可修改。"
+            : null;
 
         ShowOverlayPanel(ProxyEditorPanel);
         ProxyNameTextBox.Focus();
@@ -1459,6 +1539,7 @@ public partial class MainWindow : Window
             LocalIP = ProxyLocalIPTextBox.Text.Trim(),
             LocalPort = localPort,
             RemotePort = remotePort,
+            BandwidthLimit = ProxyBandwidthLimitTextBox.Text.Trim().ToUpperInvariant(),
             CustomDomains = ProxyCustomDomainsTextBox.Text.Trim()
         };
     }
@@ -1471,7 +1552,60 @@ public partial class MainWindow : Window
         target.LocalIP = source.LocalIP;
         target.LocalPort = source.LocalPort;
         target.RemotePort = source.RemotePort;
+        target.AllocationId = source.AllocationId;
+        target.RemotePortLocked = source.RemotePortLocked;
+        target.BandwidthLimit = source.BandwidthLimit;
         target.CustomDomains = source.CustomDomains;
+    }
+
+    private async Task ApplyServerAllocationAsync(FrpProfile profile, FrpProxy proxy)
+    {
+        if (!profile.ServerManaged)
+        {
+            return;
+        }
+
+        if (proxy.Type is not ("tcp" or "udp"))
+        {
+            throw new InvalidOperationException("当前服务端自动分配仅支持 TCP/UDP 隧道。");
+        }
+
+        var allocation = await _controlClient.AllocateAsync(profile, proxy);
+        profile.ServerAddr = allocation.ServerAddress;
+        profile.ServerPort = allocation.ServerPort;
+        proxy.RemotePort = allocation.RemotePort;
+        proxy.AllocationId = allocation.AllocationId;
+        proxy.RemotePortLocked = allocation.Locked;
+        proxy.BandwidthLimit = allocation.BandwidthLimit;
+        AppendLog($"服务端已为“{proxy.Name}”分配 {allocation.NodeName}:{allocation.RemotePort}。");
+    }
+
+    private async Task<FrpProfile> ApplyBestServerAllocationAsync(FrpProfile preferred, FrpProxy proxy)
+    {
+        if (!preferred.ServerManaged)
+        {
+            return preferred;
+        }
+
+        var candidates = new[] { preferred }
+            .Concat(_state.Profiles.Where(profile => profile.ServerManaged && !ReferenceEquals(profile, preferred)));
+        var failures = new List<string>();
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                await ApplyServerAllocationAsync(candidate, proxy);
+                ProxyProfileComboBox.SelectedItem = candidate;
+                return candidate;
+            }
+            catch (Exception exception)
+            {
+                failures.Add($"{candidate.Name}: {exception.Message}");
+            }
+        }
+
+        throw new InvalidOperationException(
+            "没有可用的托管节点。" + Environment.NewLine + string.Join(Environment.NewLine, failures));
     }
 
     private FrpProxy CreateDefaultEditorProxy()

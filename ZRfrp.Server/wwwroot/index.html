@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#07131f">
+  <title>ZRfrp Server</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="login" class="login-view hidden">
+    <form id="login-form" class="login-panel">
+      <div class="brand-mark">Frp</div>
+      <h1>ZRfrp Server</h1>
+      <p>登录 Linux 节点控制台</p>
+      <label>管理员密码<input id="password" type="password" autocomplete="current-password" required></label>
+      <button class="primary" type="submit">进入面板</button>
+      <div id="login-error" class="error"></div>
+    </form>
+  </div>
+
+  <div id="app" class="shell hidden">
+    <aside>
+      <div class="brand"><span class="brand-mark small">Frp</span><span>ZRfrp</span></div>
+      <nav>
+        <button class="nav active" data-page="overview">总览</button>
+        <button class="nav" data-page="clients">客户端</button>
+        <button class="nav" data-page="tunnels">隧道分配</button>
+        <button class="nav" data-page="config">服务配置</button>
+        <button class="nav" data-page="security">安全</button>
+      </nav>
+      <div class="aside-foot">
+        <span id="node-health" class="health"><i></i>检测中</span>
+        <button id="logout" class="quiet">退出登录</button>
+      </div>
+    </aside>
+
+    <main>
+      <header>
+        <div><h1 id="page-title">节点总览</h1><p id="page-subtitle">连接、流量和服务状态</p></div>
+        <div class="header-actions">
+          <span id="updated">尚未刷新</span>
+          <button id="refresh" class="icon-button" title="刷新" aria-label="刷新">↻</button>
+        </div>
+      </header>
+
+      <section id="page-overview" class="page active">
+        <div class="metrics">
+          <article><span>在线客户端</span><strong id="metric-clients">0</strong><small>当前控制连接</small></article>
+          <article><span>活动隧道</span><strong id="metric-proxies">0</strong><small>TCP / UDP / HTTP(S)</small></article>
+          <article><span>总入站流量</span><strong id="metric-in">0 B</strong><small>frps 累计统计</small></article>
+          <article><span>总出站流量</span><strong id="metric-out">0 B</strong><small>frps 累计统计</small></article>
+        </div>
+        <div class="content-grid">
+          <section class="panel">
+            <div class="panel-head"><div><h2>服务状态</h2><p>本机 frps 进程与控制端口</p></div>
+              <div class="service-actions">
+                <button data-service="start">启动</button><button data-service="restart">重启</button><button class="danger" data-service="stop">停止</button>
+              </div>
+            </div>
+            <div id="server-info" class="details"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head"><div><h2>最近活动</h2><p>配置、分配与服务操作</p></div></div>
+            <div id="audit-list" class="activity-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-clients" class="page">
+        <section class="panel full"><div class="panel-head"><div><h2>已连接客户端</h2><p>由 frps Dashboard 实时提供</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>客户端</th><th>地址</th><th>状态</th><th>协议</th><th>连接时间</th></tr></thead><tbody id="clients-body"></tbody></table></div>
+        </section>
+      </section>
+
+      <section id="page-tunnels" class="page">
+        <section class="panel full"><div class="panel-head"><div><h2>端口租约</h2><p>由服务端统一分配并在 frps 插件层强制执行</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>隧道</th><th>客户端</th><th>类型</th><th>远程端口</th><th>带宽限制</th><th>状态</th><th></th></tr></thead><tbody id="allocations-body"></tbody></table></div>
+        </section>
+      </section>
+
+      <section id="page-config" class="page">
+        <section class="panel full editor-panel">
+          <div class="panel-head"><div><h2>frps.toml</h2><p>保存前自动调用 frps 校验，并保留上一份备份</p></div>
+            <label class="switch-label"><input id="restart-after-save" type="checkbox" checked><span></span>保存后重启</label>
+          </div>
+          <textarea id="config-editor" spellcheck="false"></textarea>
+          <div class="editor-actions"><span id="config-status"></span><button id="save-config" class="primary">校验并保存</button></div>
+        </section>
+      </section>
+
+      <section id="page-security" class="page">
+        <section class="panel compact">
+          <div class="panel-head"><div><h2>修改管理员密码</h2><p>建议使用密码管理器生成的独立密码</p></div></div>
+          <form id="password-form" class="form-grid">
+            <label>当前密码<input id="current-password" type="password" required></label>
+            <label>新密码<input id="new-password" type="password" minlength="10" required></label>
+            <button class="primary" type="submit">更新密码</button><span id="password-status"></span>
+          </form>
+        </section>
+      </section>
+    </main>
+  </div>
+  <div id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

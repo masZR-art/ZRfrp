@@ -9,7 +9,7 @@ on:
       - main
 
 jobs:
-  build:
+  desktop:
     runs-on: windows-latest
 
     steps:
@@ -26,3 +26,21 @@ jobs:
 
       - name: Build
         run: dotnet build FrpDesktop/FrpDesktop.csproj -c Release --no-restore
+
+  server:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rid: [linux-x64, linux-arm64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish server
+        run: dotnet publish ZRfrp.Server/ZRfrp.Server.csproj -c Release -r ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -o publish/${{ matrix.rid }}

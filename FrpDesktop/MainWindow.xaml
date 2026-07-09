@@ -702,6 +702,28 @@
                     </Grid>
                     <TextBlock Text="Token" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" />
                     <PasswordBox x:Name="NodeTokenPasswordBox" Margin="0,0,0,12" />
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="ZRfrp Server 托管" Foreground="White" FontWeight="SemiBold" />
+                            <TextBlock Text="由服务端分配并锁定远程端口"
+                                       Foreground="{StaticResource MutedBrush}"
+                                       FontSize="12" />
+                        </StackPanel>
+                        <CheckBox x:Name="NodeServerManagedCheckBox"
+                                  Grid.Column="1"
+                                  Style="{StaticResource SwitchCheckBox}"
+                                  VerticalAlignment="Center" />
+                    </Grid>
+                    <TextBlock Text="控制面板地址" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" />
+                    <TextBox x:Name="NodeControlApiUrlTextBox"
+                             ToolTip="例如 https://frp.example.com"
+                             Margin="0,0,0,12" />
+                    <TextBlock Text="客户端 API Key" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" />
+                    <PasswordBox x:Name="NodeControlApiKeyPasswordBox" Margin="0,0,0,12" />
                     <TextBlock Text="frpc.exe 路径" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" />
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
@@ -1109,6 +1131,7 @@
                     <TextBlock Text="部署节点" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" />
                     <ComboBox x:Name="ProxyProfileComboBox"
                               TextSearch.TextPath="Name"
+                              SelectionChanged="ProxyProfileComboBox_SelectionChanged"
                               Margin="0,0,0,12">
                         <ComboBox.ItemTemplate>
                             <DataTemplate>
@@ -1156,6 +1179,10 @@
                             <TextBox x:Name="ProxyRemotePortTextBox" />
                         </StackPanel>
                     </Grid>
+                    <TextBlock Text="带宽限制" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" />
+                    <TextBox x:Name="ProxyBandwidthLimitTextBox"
+                             ToolTip="留空表示不限速；例如 512KB 或 2MB"
+                             Margin="0,0,0,12" />
                     <TextBlock Text="HTTP/HTTPS 域名" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" />
                     <TextBox x:Name="ProxyCustomDomainsTextBox"
                              Margin="0,0,0,8"

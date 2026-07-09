@@ -1,0 +1,22 @@
+[Unit]
+Description=ZRfrp Server web control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zrfrp
+Group=zrfrp
+WorkingDirectory=/opt/zrfrp/server
+ExecStart=/opt/zrfrp/server/zrfrp-server
+Restart=on-failure
+RestartSec=3
+EnvironmentFile=-/etc/zrfrp/zrfrp.env
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/zrfrp /var/lib/zrfrp /var/log/zrfrp
+
+[Install]
+WantedBy=multi-user.target

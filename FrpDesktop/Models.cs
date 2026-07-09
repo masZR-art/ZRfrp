@@ -39,6 +39,9 @@ public sealed class FrpProfile : ObservableObject
     private bool _isLatencyTesting;
     private int? _latencyMs;
     private string _latencyStatus = "待测速";
+    private bool _serverManaged;
+    private string _controlApiUrl = "";
+    private string _controlApiKey = "";
 
     public string Id
     {
@@ -74,6 +77,24 @@ public sealed class FrpProfile : ObservableObject
     {
         get => _token;
         set => SetField(ref _token, value);
+    }
+
+    public bool ServerManaged
+    {
+        get => _serverManaged;
+        set => SetField(ref _serverManaged, value);
+    }
+
+    public string ControlApiUrl
+    {
+        get => _controlApiUrl;
+        set => SetField(ref _controlApiUrl, value);
+    }
+
+    public string ControlApiKey
+    {
+        get => _controlApiKey;
+        set => SetField(ref _controlApiKey, value);
     }
 
     [JsonIgnore]
@@ -141,6 +162,9 @@ public sealed class FrpProfile : ObservableObject
             ServerAddr = ServerAddr,
             ServerPort = ServerPort,
             Token = Token,
+            ServerManaged = ServerManaged,
+            ControlApiUrl = ControlApiUrl,
+            ControlApiKey = ControlApiKey,
             Proxies = new ObservableCollection<FrpProxy>(Proxies.Select(proxy => proxy.Clone()))
         };
     }
@@ -148,6 +172,7 @@ public sealed class FrpProfile : ObservableObject
 
 public sealed class FrpProxy : ObservableObject
 {
+    private string _id = Guid.NewGuid().ToString("N");
     private bool _enabled = true;
     private string _name = "new-tunnel";
     private string _type = "tcp";
@@ -155,6 +180,15 @@ public sealed class FrpProxy : ObservableObject
     private int _localPort = 80;
     private int _remotePort = 6000;
     private string _customDomains = "";
+    private string _allocationId = "";
+    private bool _remotePortLocked;
+    private string _bandwidthLimit = "";
+
+    public string Id
+    {
+        get => _id;
+        set => SetField(ref _id, value);
+    }
 
     public bool Enabled
     {
@@ -198,6 +232,24 @@ public sealed class FrpProxy : ObservableObject
         set => SetField(ref _customDomains, value);
     }
 
+    public string AllocationId
+    {
+        get => _allocationId;
+        set => SetField(ref _allocationId, value);
+    }
+
+    public bool RemotePortLocked
+    {
+        get => _remotePortLocked;
+        set => SetField(ref _remotePortLocked, value);
+    }
+
+    public string BandwidthLimit
+    {
+        get => _bandwidthLimit;
+        set => SetField(ref _bandwidthLimit, value);
+    }
+
     public FrpProxy Clone()
     {
         return new FrpProxy
@@ -208,7 +260,8 @@ public sealed class FrpProxy : ObservableObject
             LocalIP = LocalIP,
             LocalPort = LocalPort,
             RemotePort = RemotePort,
-            CustomDomains = CustomDomains
+            CustomDomains = CustomDomains,
+            BandwidthLimit = BandwidthLimit
         };
     }
 }

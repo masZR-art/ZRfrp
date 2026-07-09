@@ -1,6 +1,6 @@
 # ZRfrp
 
-ZRfrp 是一个面向 frp 的可视化客户端项目。当前首个版本提供 Windows 桌面端，用来管理本机 `frpc.exe` 的节点、隧道、连接状态和运行日志。后续可以继续扩展到其他平台。
+ZRfrp 是一套面向 frp 的可视化管理工具，包含 Windows Desktop 客户端和 Linux Server 控制平面。Desktop 管理本机 `frpc.exe`，Server 提供 Web 面板、frps 配置、连接与流量统计、端口自动分配和服务端限速策略。
 
 它面向已经拥有 frps 服务端的用户，目标是把终端里的 frpc 配置、启动、停止、日志查看和常用隧道管理变成更顺手的桌面体验。
 
@@ -19,6 +19,16 @@ ZRfrp 是一个面向 frp 的可视化客户端项目。当前首个版本提供
 - 软件设置：自动检测、选择或下载安装 `frpc.exe`。
 - 网络代理：支持系统代理、不使用代理、手动代理，仅影响软件自身下载/访问发布信息。
 - 暗色界面：无边框窗口、浮动设置/编辑窗口、自定义托盘菜单。
+- 服务端托管：自动检测节点并分配、锁定 TCP/UDP 远程端口。
+- 带宽策略：为隧道设置由 frps 强制执行的带宽上限。
+
+## Linux 服务端
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/3317603015whw-art/ZRfrp/main/ZRfrp.Server/deploy/install.sh | sudo bash
+```
+
+支持 Linux x64 与 arm64。安装后会输出面板密码、客户端 API Key 和 frp Token。详细说明见 [ZRfrp.Server/README.md](ZRfrp.Server/README.md)。
 
 ## 运行环境
 
@@ -82,8 +92,15 @@ FrpDesktop/
   FrpProcessRunner.cs        frpc 进程控制
   FrpConfigSerializer.cs     frpc.toml 读写
   FrpEnvironmentService.cs   frpc 检测和下载安装
+  ZRfrpControlClient.cs      服务端端口分配协议
   NetworkLatencyTester.cs    节点 TCP 测速
   Models.cs                  数据模型
+ZRfrp.Server/
+  Program.cs                 Web API 与 frps 插件入口
+  AllocationService.cs       端口租约、节点检测与限速策略
+  FrpsManager.cs             frps 状态、配置校验与服务控制
+  wwwroot/                   Web 管理面板
+  deploy/                    Linux 安装与 systemd 配置
 ```
 
 ## 说明

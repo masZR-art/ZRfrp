@@ -5,9 +5,6 @@ namespace FrpDesktop;
 
 public sealed class AppSettingsStore
 {
-    private const string DefaultFrpcPath = @"E:\1\Downloads\frp_0.69.1_windows_amd64\frpc.exe";
-    private const string DefaultFrpcTomlPath = @"E:\1\Downloads\frp_0.69.1_windows_amd64\frpc.toml";
-
     private readonly JsonSerializerOptions _jsonOptions = new()
     {
         WriteIndented = true
@@ -83,25 +80,16 @@ public sealed class AppSettingsStore
 
     private AppState CreateInitialState()
     {
-        FrpProfile profile;
-
-        if (File.Exists(DefaultFrpcTomlPath))
+        var bundledFrpcPath = Path.Combine(AppContext.BaseDirectory, "frpc.exe");
+        var profile = new FrpProfile
         {
-            var toml = File.ReadAllText(DefaultFrpcTomlPath);
-            profile = FrpConfigSerializer.FromToml(toml, DefaultFrpcPath, "阿里云 FRP");
-        }
-        else
-        {
-            profile = new FrpProfile
-            {
-                Name = "阿里云 FRP",
-                FrpcPath = DefaultFrpcPath,
-                ServerAddr = "120.55.2.239",
-                ServerPort = 7000,
-                Token = "123456"
-            };
-            profile.Proxies.Add(FrpConfigSerializer.CreateDefaultProxy());
-        }
+            Name = "新节点",
+            FrpcPath = File.Exists(bundledFrpcPath) ? bundledFrpcPath : "",
+            ServerAddr = "",
+            ServerPort = 7000,
+            Token = ""
+        };
+        profile.Proxies.Add(FrpConfigSerializer.CreateDefaultProxy());
 
         return new AppState
         {
@@ -128,6 +116,13 @@ public sealed class AppSettingsStore
             if (profile.Proxies is null)
             {
                 profile.Proxies = new();
+            }
+            foreach (var proxy in profile.Proxies)
+            {
+                if (string.IsNullOrWhiteSpace(proxy.Id))
+                {
+                    proxy.Id = Guid.NewGuid().ToString("N");
+                }
             }
         }
 
