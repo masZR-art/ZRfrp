@@ -1,4 +1,9 @@
-# ZRfrp v2.0.0
+# ZRfrp v2.0.1
+
+- 修复重复安装或升级 Linux Server 时 `PUBLIC_HOST: unbound variable` 导致脚本末尾报错。
+- 安装器优先保留已有生产配置中的公网地址，也支持通过 `ZRFRP_PUBLIC_HOST` 显式指定。
+
+## v2.0.0
 
 控制平台主版本。原个人使用版保存在 `personal-manager` 分支。
 

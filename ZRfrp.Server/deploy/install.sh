@@ -79,8 +79,17 @@ zrfrp ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} start zrfrp-frps, ${SYSTEMCTL_PATH}
 EOF
 chmod 0440 /etc/sudoers.d/zrfrp
 
+PUBLIC_HOST="${ZRFRP_PUBLIC_HOST:-}"
+if [[ -z "${PUBLIC_HOST}" && -f /opt/zrfrp/server/appsettings.Production.json ]]; then
+  PUBLIC_HOST="$(sed -n 's/.*"PublicHost"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    /opt/zrfrp/server/appsettings.Production.json | head -n 1)"
+fi
+if [[ -z "${PUBLIC_HOST}" ]]; then
+  PUBLIC_HOST="$(curl -4 --fail --silent --max-time 4 https://api.ipify.org \
+    || hostname -I | awk '{print $1}')"
+fi
+
 if [[ ! -f /opt/zrfrp/server/appsettings.Production.json ]]; then
-  PUBLIC_HOST="$(curl -4 --fail --silent --max-time 4 https://api.ipify.org || hostname -I | awk '{print $1}')"
   cat >/opt/zrfrp/server/appsettings.Production.json <<EOF
 {
   "ZRfrp": {
