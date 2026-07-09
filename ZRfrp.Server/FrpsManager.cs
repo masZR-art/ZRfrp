@@ -143,6 +143,16 @@ public sealed class FrpsManager
     public bool IsInstalled =>
         File.Exists(_options.FrpsBinaryPath) && File.Exists(_options.FrpsConfigPath);
 
+    public async Task<string> GetInstalledVersionAsync()
+    {
+        if (!File.Exists(_options.FrpsBinaryPath))
+        {
+            return "";
+        }
+        var result = await RunAsync(_options.FrpsBinaryPath, ["--version"], TimeSpan.FromSeconds(8));
+        return result.ExitCode == 0 ? result.Output.Trim() : "";
+    }
+
     public Task<(int ExitCode, string Output)> InstallAsync() =>
         RunAsync("sudo", ["/usr/local/sbin/zrfrp-install-frps"], TimeSpan.FromMinutes(3));
 

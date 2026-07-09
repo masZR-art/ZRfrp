@@ -111,7 +111,8 @@ chmod 0660 /etc/zrfrp/frps.toml
 chmod 0640 /opt/zrfrp/server/appsettings.Production.json
 
 systemctl daemon-reload
-systemctl enable --now zrfrp-server zrfrp-frps
+systemctl enable zrfrp-server zrfrp-frps
+systemctl restart zrfrp-server zrfrp-frps
 
 echo
 echo "ZRfrp Server 已安装。"

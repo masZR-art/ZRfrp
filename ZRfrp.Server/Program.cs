@@ -30,6 +30,17 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
             return Task.CompletedTask;
         };
+        cookie.Events.OnValidatePrincipal = async context =>
+        {
+            var accountId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+            var store = context.HttpContext.RequestServices.GetRequiredService<StateStore>();
+            if (string.IsNullOrWhiteSpace(accountId)
+                || !store.State.Accounts.Any(account => account.Id == accountId && account.Enabled))
+            {
+                context.RejectPrincipal();
+                await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            }
+        };
     });
 builder.Services.AddAuthorization();
 
@@ -38,7 +49,15 @@ var stateStore = app.Services.GetRequiredService<StateStore>();
 await InitializeSecretsAsync(stateStore, app.Logger);
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = context =>
+    {
+        context.Context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        context.Context.Response.Headers.Pragma = "no-cache";
+        context.Context.Response.Headers.Expires = "0";
+    }
+});
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -280,8 +299,13 @@ app.MapPut("/api/config/model", async (
         : Results.BadRequest(new { error = result.Message });
 }).RequireAuthorization(policy => policy.RequireRole("admin"));
 
-app.MapGet("/api/frps/install-status", (FrpsManager frps) =>
-    Results.Ok(new { installed = frps.IsInstalled }))
+app.MapGet("/api/frps/install-status", async (FrpsManager frps, CancellationToken cancellationToken) =>
+    Results.Ok(new
+    {
+        installed = frps.IsInstalled,
+        version = await frps.GetInstalledVersionAsync(),
+        reachable = await frps.IsReachableAsync(cancellationToken)
+    }))
     .RequireAuthorization(policy => policy.RequireRole("admin"));
 
 app.MapPost("/api/frps/install", async (FrpsManager frps, StateStore store) =>
