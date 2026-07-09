@@ -2,10 +2,13 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using WpfBrushes = System.Windows.Media.Brushes;
 using WpfButton = System.Windows.Controls.Button;
 using WpfCheckBox = System.Windows.Controls.CheckBox;
 using WpfCursors = System.Windows.Input.Cursors;
+using WpfImage = System.Windows.Controls.Image;
+using WpfOrientation = System.Windows.Controls.Orientation;
 
 namespace FrpDesktop;
 
@@ -73,13 +76,29 @@ public partial class TrayMenuWindow : Window
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var title = new StackPanel();
-        title.Children.Add(new TextBlock
+        var titleRow = new StackPanel
         {
-            Text = profile.Name,
+            Orientation = WpfOrientation.Horizontal
+        };
+        if (profile.HasFlagIcon)
+        {
+            titleRow.Children.Add(new WpfImage
+            {
+                Source = new BitmapImage(new Uri(profile.FlagIconPath, UriKind.Relative)),
+                Width = 18,
+                Height = 18,
+                Stretch = Stretch.Uniform,
+                Margin = new Thickness(0, 1, 5, 0)
+            });
+        }
+        titleRow.Children.Add(new TextBlock
+        {
+            Text = profile.NameWithoutFlag,
             Foreground = WpfBrushes.White,
             FontWeight = FontWeights.SemiBold,
             FontSize = 14
         });
+        title.Children.Add(titleRow);
         title.Children.Add(new TextBlock
         {
             Text = $"{profile.ServerAddr}:{profile.ServerPort}",

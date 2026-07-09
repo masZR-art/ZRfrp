@@ -21,6 +21,9 @@ function arrayFrom(value){if(Array.isArray(value))return value;if(Array.isArray(
 function fmtBytes(value){let n=Number(value||0);if(value===-1)return"不限";for(const unit of["B","KB","MB","GB","TB"]){if(n<1024||unit==="TB")return`${n<10&&unit!=="B"?n.toFixed(1):Math.round(n)} ${unit}`;n/=1024}}
 function escapeHtml(value){return String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
 function emptyRow(columns,text){return`<tr><td class="empty" colspan="${columns}">${text}</td></tr>`}
+function splitLeadingFlag(value){const raw=String(value??""),normalized=raw.replace(/\ufe0f/g,"").trimStart();if(normalized.startsWith("🇯🇵"))return{flag:"JP",name:normalized.slice(4).trimStart(),raw};return{flag:"",name:raw,raw}}
+function nodeNameEditor(id,name,version){const info=splitLeadingFlag(name),flag=info.flag?`<img class="flag-icon" src="/flags/jp.png" alt="JP">`:"";return`<div class="node-name-cell">${flag}<input class="node-name-edit" data-id="${escapeHtml(id)}" data-flag="${escapeHtml(info.flag)}" value="${escapeHtml(info.name)}"></div><small>${escapeHtml(version)}</small>`}
+function getNodeNameInputValue(input){const prefix=input.dataset.flag==="JP"?"🇯🇵":"";return prefix+input.value.trim()}
 async function refresh(){
   if(!session?.authenticated)return;
   if(session.role==="customer"){await loadCustomer();return}
@@ -71,3 +74,7 @@ $("#password-form").onsubmit=async e=>{e.preventDefault();try{await api("/api/ad
 $("#version-button").onclick=async()=>{if($("#version-button").dataset.available!=="true"){checkUpdate();return}try{const r=await api("/api/update",{method:"POST"});toast(r.message)}catch(e){toast(e.message)}};
 (async()=>{try{session=await api("/api/session");if(session.authenticated&&["admin","customer"].includes(session.role)){showApp(session.role);refresh();checkUpdate()}else showLogin()}catch{showLogin()}})();
 setInterval(()=>{if(session?.authenticated)refresh()},10000);
+function decorateNodeNameInputs(){document.querySelectorAll(".node-name-edit").forEach(input=>{if(input.dataset.flagDecorated==="true")return;const info=splitLeadingFlag(input.value);if(!info.flag)return;input.value=info.name;input.dataset.leadingFlag=info.flag;input.dataset.flagDecorated="true";const wrap=document.createElement("span");wrap.className="node-name-cell";input.parentNode.insertBefore(wrap,input);const image=document.createElement("img");image.className="flag-icon";image.src="/flags/jp.png";image.alt="JP";wrap.append(image,input)})}
+const originalLoadNodes=loadNodes;
+loadNodes=async function(){await originalLoadNodes();decorateNodeNameInputs()};
+document.addEventListener("click",event=>{const button=event.target.closest(".node-save");if(!button)return;const input=document.querySelector('.node-name-edit[data-id="'+button.dataset.id+'"]');if(input?.dataset.leadingFlag==="JP"&&!input.value.startsWith("🇯🇵"))input.value="🇯🇵"+input.value},true);
