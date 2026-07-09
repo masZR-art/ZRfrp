@@ -53,6 +53,30 @@ builder.Services.AddAuthorization();
 var app = builder.Build();
 var stateStore = app.Services.GetRequiredService<StateStore>();
 await InitializeSecretsAsync(stateStore, app.Logger);
+if (args.Length >= 2 && args[0].Equals("--reset-admin", StringComparison.OrdinalIgnoreCase))
+{
+    if (args[1].Length < 10)
+    {
+        Console.Error.WriteLine("新管理员密码至少需要 10 个字符。");
+        Environment.ExitCode = 1;
+        return;
+    }
+    var admin = stateStore.State.Accounts.FirstOrDefault(account =>
+        account.Role == "admin" && account.Username.Equals("admin", StringComparison.OrdinalIgnoreCase));
+    if (admin is null)
+    {
+        Console.Error.WriteLine("未找到 admin 管理员账号。");
+        Environment.ExitCode = 1;
+        return;
+    }
+    admin.PasswordHash = Security.Hash(args[1]);
+    admin.Enabled = true;
+    stateStore.State.AdminPasswordHash = admin.PasswordHash;
+    stateStore.State.AccountSessions.RemoveAll(session => session.AccountId == admin.Id);
+    await stateStore.AuditAsync("security", "通过本机命令重置 admin 管理员密码");
+    Console.WriteLine("admin 管理员密码已重置。");
+    return;
+}
 
 app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions

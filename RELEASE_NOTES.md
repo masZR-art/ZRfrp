@@ -1,4 +1,11 @@
-# ZRfrp v2.0.3
+# ZRfrp v2.0.4
+
+- 修复登录接口返回 `401` 时被前端错误显示为“登录已失效”。
+- 登录失败现在会准确显示“账号或密码错误”。
+- 新增本机 `--reset-admin` 管理员密码恢复命令。
+- 安装器支持通过 `ZRFRP_RESET_ADMIN_PASSWORD` 在升级时安全重置 admin 密码。
+
+## v2.0.3
 
 - 将 Web 登录 Cookie 的 Data Protection 密钥持久化到 `/var/lib/zrfrp/keys`。
 - 修复服务重启、安装或更新后现有登录会话立即失效的问题。

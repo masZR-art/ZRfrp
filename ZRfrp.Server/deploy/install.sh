@@ -110,6 +110,12 @@ chmod 0770 /etc/zrfrp
 chmod 0660 /etc/zrfrp/frps.toml
 chmod 0640 /opt/zrfrp/server/appsettings.Production.json
 
+if [[ -n "${ZRFRP_RESET_ADMIN_PASSWORD:-}" ]]; then
+  systemctl stop zrfrp-server 2>/dev/null || true
+  sudo -u zrfrp /opt/zrfrp/server/zrfrp-server \
+    --reset-admin "${ZRFRP_RESET_ADMIN_PASSWORD}"
+fi
+
 systemctl daemon-reload
 systemctl enable zrfrp-server zrfrp-frps
 systemctl restart zrfrp-server zrfrp-frps
@@ -117,7 +123,7 @@ systemctl restart zrfrp-server zrfrp-frps
 echo
 echo "ZRfrp Server 已安装。"
 echo "面板地址: http://${PUBLIC_HOST}:7600"
-echo "管理员密码: ${ADMIN_PASSWORD}"
+echo "初始管理员密码（若未在面板修改）: ${ADMIN_PASSWORD}"
 echo "客户端 API Key: ${CLIENT_KEY}"
 echo "frp Token: ${FRP_TOKEN}"
 echo "节点 Peer Key: ${PEER_KEY}"

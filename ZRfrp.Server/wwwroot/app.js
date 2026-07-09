@@ -8,7 +8,7 @@ const titles={
 };
 async function api(path,options={}){
   const response=await fetch(path,{headers:{"Content-Type":"application/json",...(options.headers||{})},...options});
-  if(response.status===401){showLogin();throw new Error("登录已失效");}
+  if(response.status===401&&path!=="/api/auth/login"){showLogin();throw new Error("登录会话已失效，请重新登录");}
   const text=await response.text();let body={};try{body=text?JSON.parse(text):{}}catch{body={error:text}}
   if(!response.ok)throw new Error(body.error||`请求失败 (${response.status})`);return body;
 }
