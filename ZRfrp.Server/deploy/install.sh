@@ -34,7 +34,13 @@ trap 'rm -rf "${TMP}"' EXIT
 curl --fail --location --retry 8 --retry-all-errors --retry-delay 2 \
   --connect-timeout 20 --speed-time 30 --speed-limit 1024 \
   "${RELEASE_URL}" -o "${TMP}/server.tar.gz"
-tar -xzf "${TMP}/server.tar.gz" -C /opt/zrfrp/server
+tar -xzf "${TMP}/server.tar.gz" -C "${TMP}"
+SERVER_DIR="$(find "${TMP}" -maxdepth 2 -type f -name zrfrp-server -printf '%h\n' | head -n 1)"
+if [[ -z "${SERVER_DIR}" ]]; then
+  echo "更新包结构无效：未找到 zrfrp-server。" >&2
+  exit 1
+fi
+cp -a "${SERVER_DIR}/." /opt/zrfrp/server/
 chmod 0755 /opt/zrfrp/server/zrfrp-server
 
 if [[ "${ZRFRP_REINSTALL_FRPS:-0}" == "1" || ! -x /opt/zrfrp/frps ]]; then

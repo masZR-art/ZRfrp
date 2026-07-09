@@ -1,4 +1,10 @@
-# ZRfrp v2.0.8
+# ZRfrp v2.0.9
+
+- 修复 Server 发布包包含顶层目录时，安装/更新脚本没有正确覆盖 `/opt/zrfrp/server/zrfrp-server` 的问题。
+- 面板更新完成后使用唯一 systemd 临时单元触发重启，失败时自动退回后台 `systemctl restart`。
+- 总览页 `frps 版本` 优先读取本机 `/opt/zrfrp/frps --version`，避免 Dashboard 未返回版本时显示未知。
+
+## v2.0.8
 
 - 增强面板一键更新：下载 GitHub Release 资产时启用更多重试和网络错误重试。
 - 服务端更新超时时间从 20 秒延长到 5 分钟，避免慢速网络下被面板提前中断。

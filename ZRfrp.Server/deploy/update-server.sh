@@ -32,6 +32,15 @@ EOF
 fi
 
 tar -xzf "${TMP}/server.tar.gz" -C "${TMP}"
-cp -a "${TMP}/." /opt/zrfrp/server/
+SERVER_DIR="$(find "${TMP}" -maxdepth 2 -type f -name zrfrp-server -printf '%h\n' | head -n 1)"
+if [[ -z "${SERVER_DIR}" ]]; then
+  echo "更新包结构无效：未找到 zrfrp-server。" >&2
+  exit 1
+fi
+cp -a "${SERVER_DIR}/." /opt/zrfrp/server/
+chmod 0755 /opt/zrfrp/server/zrfrp-server
 chown -R zrfrp:zrfrp /opt/zrfrp/server
-systemd-run --unit=zrfrp-update-restart --on-active=2s /usr/bin/systemctl restart zrfrp-server zrfrp-frps
+UNIT="zrfrp-update-restart-$(date +%s)"
+if ! systemd-run --collect --unit="${UNIT}" --on-active=2s /usr/bin/systemctl restart zrfrp-server zrfrp-frps; then
+  nohup /bin/sh -c 'sleep 2; /usr/bin/systemctl restart zrfrp-server zrfrp-frps' >/dev/null 2>&1 &
+fi
