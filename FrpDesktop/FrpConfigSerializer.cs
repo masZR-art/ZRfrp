@@ -46,11 +46,6 @@ public static class FrpConfigSerializer
                 builder.AppendLine($"customDomains = {ToTomlArray(proxy.CustomDomains)}");
             }
 
-            if (!string.IsNullOrWhiteSpace(proxy.BandwidthLimit))
-            {
-                builder.AppendLine($"transport.bandwidthLimit = {Quote(proxy.BandwidthLimit)}");
-                builder.AppendLine("transport.bandwidthLimitMode = \"server\"");
-            }
         }
 
         return builder.ToString();

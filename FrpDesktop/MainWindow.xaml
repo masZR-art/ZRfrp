@@ -313,6 +313,10 @@
                                     Style="{StaticResource PrimaryButton}"
                                     Margin="0,0,10,0"
                                     Click="ConnectionButton_Click" />
+                            <Button Content="导入节点"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Margin="0,0,10,0"
+                                    Click="ImportNodesButton_Click" />
                             <Button Content="导入配置"
                                     Style="{StaticResource SecondaryButton}"
                                     Click="ImportButton_Click" />
@@ -645,6 +649,58 @@
                                 Style="{StaticResource DangerButton}"
                                 Margin="7,0,0,0"
                                 Click="ConfirmAccept_Click" />
+                    </UniformGrid>
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="FirstLoginDialogPanel"
+                    Width="450"
+                    Background="#101B28"
+                    BorderBrush="{StaticResource LineBrush}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="22"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Visibility="Collapsed">
+                <StackPanel>
+                    <TextBlock Text="登录 ZRfrp 控制平台"
+                               Foreground="White"
+                               FontSize="20"
+                               FontWeight="Bold" />
+                    <TextBlock Text="登录后会自动载入可用节点，也可以先跳过，稍后在设置中登录。"
+                               Foreground="{StaticResource MutedBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,8,0,18" />
+                    <TextBlock Text="平台地址" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" />
+                    <TextBox x:Name="FirstLoginPlatformUrlTextBox" Margin="0,0,0,10" />
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,6,0">
+                            <TextBlock Text="账号" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" />
+                            <TextBox x:Name="FirstLoginUsernameTextBox" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                            <TextBlock Text="密码" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" />
+                            <PasswordBox x:Name="FirstLoginPasswordBox" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock x:Name="FirstLoginErrorText"
+                               Foreground="{StaticResource DangerBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,0,0,12" />
+                    <UniformGrid Columns="2">
+                        <Button Content="跳过"
+                                Style="{StaticResource SecondaryButton}"
+                                Margin="0,0,7,0"
+                                Click="FirstLoginSkip_Click" />
+                        <Button Content="登录并载入节点"
+                                Style="{StaticResource PrimaryButton}"
+                                Margin="7,0,0,0"
+                                Click="FirstLoginAccept_Click" />
                     </UniformGrid>
                 </StackPanel>
             </Border>
@@ -1223,10 +1279,6 @@
                             <TextBox x:Name="ProxyRemotePortTextBox" />
                         </StackPanel>
                     </Grid>
-                    <TextBlock Text="带宽限制" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" />
-                    <TextBox x:Name="ProxyBandwidthLimitTextBox"
-                             ToolTip="留空表示不限速；例如 512KB 或 2MB"
-                             Margin="0,0,0,12" />
                     <TextBlock Text="HTTP/HTTPS 域名" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" />
                     <TextBox x:Name="ProxyCustomDomainsTextBox"
                              Margin="0,0,0,8"

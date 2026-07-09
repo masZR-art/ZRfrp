@@ -32,11 +32,11 @@
         <button class="nav admin-only" data-page="config">模块化配置</button>
         <button class="nav admin-only" data-page="maintenance">系统维护</button>
         <button class="nav admin-only" data-page="security">安全</button>
-        <button class="nav customer-only" data-page="customer">我的用量</button>
+        <button class="nav customer-only" data-page="customer">仪表盘</button>
       </nav>
       <div class="aside-foot">
         <span id="node-health" class="health"><i></i>检测中</span>
-        <button id="version-button" class="quiet">v2.0.10</button>
+        <button id="version-button" class="quiet">v2.1.0</button>
         <button id="logout" class="quiet">退出登录</button>
       </div>
     </aside>
@@ -151,7 +151,9 @@
           <article><span>流量额度</span><strong id="customer-quota">不限</strong><small>由管理员分配</small></article>
           <article><span>剩余流量</span><strong id="customer-remaining">不限</strong><small>额度用尽后停止连接</small></article>
         </div>
-        <section class="panel compact"><div class="panel-head"><div><h2>账号信息</h2><p>当前登录的 ZRfrp 客户账号</p></div></div><div id="customer-info" class="details"></div></section>
+        <section class="panel compact"><div class="panel-head"><div><h2>账号信息</h2><p>当前登录的 ZRfrp 客户账号</p></div>
+          <div class="service-actions"><button id="copy-node-export">复制节点配置</button><button id="download-node-export" class="primary">下载节点配置</button></div>
+        </div><div id="customer-info" class="details"></div><p id="customer-export-status" class="notice"></p></section>
       </section>
 
       <section id="page-security" class="page">

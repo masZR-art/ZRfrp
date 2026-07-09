@@ -29,6 +29,8 @@ public sealed class AppState
 
     public string AccountUsername { get; set; } = "";
 
+    public bool AccountLoginSkipped { get; set; }
+
     public ObservableCollection<FrpProfile> Profiles { get; set; } = new();
 }
 
@@ -315,3 +317,18 @@ public abstract class ObservableObject : INotifyPropertyChanged
         return true;
     }
 }
+
+public sealed record NodeExportDocument(
+    string Kind,
+    int Version,
+    string PlatformUrl,
+    DateTimeOffset ExportedAt,
+    IReadOnlyList<NodeExportEntry> Nodes);
+
+public sealed record NodeExportEntry(
+    string Id,
+    string Name,
+    string ServerAddress,
+    int ServerPort,
+    string FrpToken,
+    string ControlApiUrl);

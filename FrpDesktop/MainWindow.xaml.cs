@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
@@ -86,12 +87,18 @@ public partial class MainWindow : Window
         ProxyProfileComboBox.ItemsSource = _state.Profiles;
 
         var selectedProfile = _state.Profiles.FirstOrDefault(profile => profile.Id == _state.LastProfileId)
-            ?? _state.Profiles.First();
-        ProfilesList.SelectedItem = selectedProfile;
-
-        if (_selectedProfile is null)
+            ?? _state.Profiles.FirstOrDefault();
+        if (selectedProfile is not null)
         {
-            LoadProfile(selectedProfile);
+            ProfilesList.SelectedItem = selectedProfile;
+            if (_selectedProfile is null)
+            {
+                LoadProfile(selectedProfile);
+            }
+        }
+        else
+        {
+            LoadProfile(null);
         }
 
         AppendLog($"配置目录：{_store.AppDataDirectory}");
@@ -99,6 +106,10 @@ public partial class MainWindow : Window
         UpdateRunningState(false);
         _ = TestAllProfilesLatencyAsync();
         await CheckDesktopUpdateAsync(showNotification: true);
+        if (ShouldShowFirstLoginDialog())
+        {
+            ShowFirstLoginDialog();
+        }
     }
 
     private void Window_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -489,7 +500,7 @@ public partial class MainWindow : Window
             if (string.IsNullOrWhiteSpace(profile.AccountAccessToken)
                 || profile.AccountTokenExpiresAt <= DateTimeOffset.UtcNow.AddMinutes(1))
             {
-                throw new InvalidOperationException("请先在软件设置中登录控制平台账号。");
+                throw new InvalidOperationException("请先登录控制平台账号。");
             }
             ValidateProfile(profile);
             var configPath = _store.GetGeneratedConfigPath(profile);
@@ -570,6 +581,94 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ImportNodesButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new WpfOpenFileDialog
+        {
+            Title = "导入 ZRfrp 节点配置",
+            Filter = "ZRfrp 节点配置 (*.json)|*.json|所有文件 (*.*)|*.*",
+            CheckFileExists = true
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        try
+        {
+            var document = JsonSerializer.Deserialize<NodeExportDocument>(
+                File.ReadAllText(dialog.FileName),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            if (document is null || !string.Equals(document.Kind, "zrfrp-node-export", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("这不是有效的 ZRfrp 节点配置文件。");
+            }
+
+            var imported = ImportNodeDocument(document, null);
+            SaveState();
+            AppendLog(imported == 0
+                ? "节点配置已导入，没有发现新的节点。"
+                : $"节点配置已导入，新增 {imported} 个节点。");
+        }
+        catch (Exception exception)
+        {
+            _ = ShowConfirmAsync("导入失败", exception.Message);
+        }
+    }
+
+    private int ImportNodeDocument(NodeExportDocument document, ClientAccountSession? session)
+    {
+        var imported = 0;
+        foreach (var node in document.Nodes)
+        {
+            if (string.IsNullOrWhiteSpace(node.ServerAddress) || node.ServerPort <= 0)
+            {
+                continue;
+            }
+
+            var controlUrl = string.IsNullOrWhiteSpace(node.ControlApiUrl)
+                ? document.PlatformUrl
+                : node.ControlApiUrl;
+            var exists = _state.Profiles.Any(profile =>
+                string.Equals(profile.ServerAddr, node.ServerAddress, StringComparison.OrdinalIgnoreCase)
+                && profile.ServerPort == node.ServerPort
+                && string.Equals(profile.ControlApiUrl.TrimEnd('/'), controlUrl.TrimEnd('/'), StringComparison.OrdinalIgnoreCase));
+            if (exists)
+            {
+                continue;
+            }
+
+            var profile = new FrpProfile
+            {
+                Name = string.IsNullOrWhiteSpace(node.Name) ? $"节点-{_state.Profiles.Count + 1}" : node.Name,
+                FrpcPath = _state.ClientFrpcPath,
+                ServerAddr = node.ServerAddress,
+                ServerPort = node.ServerPort,
+                Token = node.FrpToken,
+                ServerManaged = true,
+                ControlApiUrl = controlUrl
+            };
+            if (session is not null)
+            {
+                profile.AccountId = session.AccountId;
+                profile.AccountAccessToken = session.AccessToken;
+                profile.AccountTokenExpiresAt = session.ExpiresAt;
+            }
+            _state.Profiles.Add(profile);
+            imported++;
+        }
+
+        if (_selectedProfile is null && _state.Profiles.Count > 0)
+        {
+            ProfilesList.SelectedItem = _state.Profiles[0];
+            LoadProfile(_state.Profiles[0]);
+        }
+
+        ProxyProfileComboBox.Items.Refresh();
+        return imported;
+    }
+
     private void BrowseFrpcButton_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new WpfOpenFileDialog
@@ -609,33 +708,14 @@ public partial class MainWindow : Window
     {
         try
         {
-            var platformUrl = PlatformUrlTextBox.Text.Trim();
-            var username = AccountUsernameTextBox.Text.Trim();
-            var session = await _controlClient.LoginAsync(
-                platformUrl, username, AccountPasswordBox.Password, Environment.MachineName);
-            _state.PlatformUrl = platformUrl;
-            _state.AccountUsername = session.Username;
-            var target = _selectedProfile ?? _state.Profiles.First();
-            target.ServerManaged = true;
-            target.ControlApiUrl = platformUrl;
-            target.ServerAddr = session.ServerAddress;
-            target.ServerPort = session.ServerPort;
-            target.Token = session.FrpToken;
-            foreach (var profile in _state.Profiles.Where(item => item.ServerManaged))
-            {
-                profile.AccountId = session.AccountId;
-                profile.AccountAccessToken = session.AccessToken;
-                profile.AccountTokenExpiresAt = session.ExpiresAt;
-                profile.Token = session.FrpToken;
-                if (string.IsNullOrWhiteSpace(profile.ControlApiUrl))
-                {
-                    profile.ControlApiUrl = platformUrl;
-                }
-            }
+            var session = await LoginAndSyncNodesAsync(
+                PlatformUrlTextBox.Text.Trim(),
+                AccountUsernameTextBox.Text.Trim(),
+                AccountPasswordBox.Password);
             AccountPasswordBox.Password = "";
             SaveState();
             UpdateAccountStatus();
-            AppendLog($"控制平台账号“{session.Username}”登录成功。");
+            AppendLog($"控制平台账号“{session.Username}”登录成功，节点已同步。");
         }
         catch (Exception exception)
         {
@@ -653,6 +733,85 @@ public partial class MainWindow : Window
             ? "未登录，登录后才能获取服务授权并启动连接。"
             : $"已登录：{_state.AccountUsername}，授权有效至 {profile.AccountTokenExpiresAt.LocalDateTime:g}";
         AccountStatusText.Foreground = profile is null ? LogWarningBrush : LogSuccessBrush;
+    }
+
+    private bool ShouldShowFirstLoginDialog()
+    {
+        if (_state.AccountLoginSkipped)
+        {
+            return false;
+        }
+
+        return !_state.Profiles.Any(item =>
+            !string.IsNullOrWhiteSpace(item.AccountAccessToken)
+            && item.AccountTokenExpiresAt > DateTimeOffset.UtcNow);
+    }
+
+    private void ShowFirstLoginDialog()
+    {
+        FirstLoginPlatformUrlTextBox.Text = _state.PlatformUrl;
+        FirstLoginUsernameTextBox.Text = _state.AccountUsername;
+        FirstLoginPasswordBox.Password = "";
+        FirstLoginErrorText.Text = "";
+        ShowOverlayPanel(FirstLoginDialogPanel);
+    }
+
+    private async void FirstLoginAccept_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var session = await LoginAndSyncNodesAsync(
+                FirstLoginPlatformUrlTextBox.Text.Trim(),
+                FirstLoginUsernameTextBox.Text.Trim(),
+                FirstLoginPasswordBox.Password);
+            FirstLoginPasswordBox.Password = "";
+            SaveState();
+            CloseOpenDialogs();
+            AppendLog($"控制平台账号“{session.Username}”登录成功。");
+        }
+        catch (Exception exception)
+        {
+            FirstLoginErrorText.Text = exception.Message;
+        }
+    }
+
+    private void FirstLoginSkip_Click(object sender, RoutedEventArgs e)
+    {
+        _state.AccountLoginSkipped = true;
+        SaveState();
+        CloseOpenDialogs();
+    }
+
+    private async Task<ClientAccountSession> LoginAndSyncNodesAsync(string platformUrl, string username, string password)
+    {
+        var session = await _controlClient.LoginAsync(platformUrl, username, password, Environment.MachineName);
+        _state.PlatformUrl = platformUrl;
+        _state.AccountUsername = session.Username;
+        _state.AccountLoginSkipped = false;
+
+        var document = await _controlClient.ExportNodesAsync(platformUrl, session.AccessToken);
+        var imported = ImportNodeDocument(document, session);
+
+        foreach (var profile in _state.Profiles.Where(item => item.ServerManaged))
+        {
+            profile.AccountId = session.AccountId;
+            profile.AccountAccessToken = session.AccessToken;
+            profile.AccountTokenExpiresAt = session.ExpiresAt;
+            profile.Token = session.FrpToken;
+            if (string.IsNullOrWhiteSpace(profile.ControlApiUrl))
+            {
+                profile.ControlApiUrl = platformUrl;
+            }
+        }
+
+        if (_selectedProfile is null && _state.Profiles.Count > 0)
+        {
+            ProfilesList.SelectedItem = _state.Profiles[0];
+            LoadProfile(_state.Profiles[0]);
+        }
+
+        AppendLog(imported == 0 ? "节点配置已是最新。" : $"已自动载入 {imported} 个节点。");
+        return session;
     }
 
     private async Task CheckDesktopUpdateAsync(bool showNotification)
@@ -1224,14 +1383,14 @@ public partial class MainWindow : Window
         }
     }
 
-    private void LoadProfile(FrpProfile profile)
+    private void LoadProfile(FrpProfile? profile)
     {
         _selectedProfile = profile;
-        _state.LastProfileId = profile.Id;
+        _state.LastProfileId = profile?.Id;
 
-        HeaderTitle.Text = profile.Name;
-        NodeGeneratedConfigTextBox.Text = _store.GetGeneratedConfigPath(profile);
-        ProxiesList.ItemsSource = profile.Proxies;
+        HeaderTitle.Text = profile?.Name ?? "尚未添加节点";
+        NodeGeneratedConfigTextBox.Text = profile is null ? "" : _store.GetGeneratedConfigPath(profile);
+        ProxiesList.ItemsSource = profile?.Proxies;
         ProxyProfileComboBox.SelectedItem = profile;
 
         UpdateSummary();
@@ -1294,12 +1453,6 @@ public partial class MainWindow : Window
 
     private async Task DeleteProfileAsync(FrpProfile profile)
     {
-        if (_state.Profiles.Count <= 1)
-        {
-            await ShowConfirmAsync("无法删除", "至少需要保留一个节点。");
-            return;
-        }
-
         var result = await ShowConfirmAsync("删除节点", $"删除节点“{profile.Name}”？这个节点下的隧道配置也会一起移除。");
         if (!result)
         {
@@ -1325,7 +1478,15 @@ public partial class MainWindow : Window
 
         var index = _state.Profiles.IndexOf(profile);
         _state.Profiles.Remove(profile);
-        ProfilesList.SelectedIndex = Math.Clamp(index - 1, 0, _state.Profiles.Count - 1);
+        if (_state.Profiles.Count == 0)
+        {
+            ProfilesList.SelectedItem = null;
+            LoadProfile(null);
+        }
+        else
+        {
+            ProfilesList.SelectedIndex = Math.Clamp(index - 1, 0, _state.Profiles.Count - 1);
+        }
         ProxyProfileComboBox.Items.Refresh();
         SaveState();
         AppendLog("节点已删除。");
@@ -1430,12 +1591,6 @@ public partial class MainWindow : Window
 
         ValidatePort(proxy.LocalPort, $"隧道“{proxy.Name}”的本地端口");
 
-        if (!string.IsNullOrWhiteSpace(proxy.BandwidthLimit)
-            && !Regex.IsMatch(proxy.BandwidthLimit, @"^\d+(KB|MB)$", RegexOptions.IgnoreCase))
-        {
-            throw new InvalidOperationException($"隧道“{proxy.Name}”的带宽限制格式无效，请使用 512KB 或 2MB。");
-        }
-
         if (type is "tcp" or "udp")
         {
             ValidatePort(proxy.RemotePort, $"隧道“{proxy.Name}”的远程端口");
@@ -1497,7 +1652,6 @@ public partial class MainWindow : Window
         ProxyLocalIPTextBox.Text = proxy.LocalIP;
         ProxyLocalPortTextBox.Text = proxy.LocalPort.ToString();
         ProxyRemotePortTextBox.Text = proxy.RemotePort <= 0 ? "" : proxy.RemotePort.ToString();
-        ProxyBandwidthLimitTextBox.Text = proxy.BandwidthLimit;
         ProxyCustomDomainsTextBox.Text = proxy.CustomDomains;
         var targetProfile = ProxyProfileComboBox.SelectedItem as FrpProfile ?? _selectedProfile;
         ProxyRemotePortTextBox.IsReadOnly = proxy.RemotePortLocked || targetProfile?.ServerManaged == true;
@@ -1514,6 +1668,7 @@ public partial class MainWindow : Window
         StopFloatingPanelDrag();
         CloseFloatingPanelWindow();
         ConfirmDialogPanel.Visibility = Visibility.Collapsed;
+        FirstLoginDialogPanel.Visibility = Visibility.Collapsed;
         NodeSettingsDialogPanel.Visibility = Visibility.Collapsed;
         AppSettingsDialogPanel.Visibility = Visibility.Collapsed;
         ProxyEditorPanel.Visibility = Visibility.Collapsed;
@@ -1525,6 +1680,7 @@ public partial class MainWindow : Window
     private void ShowOverlayPanel(UIElement panel)
     {
         ConfirmDialogPanel.Visibility = Visibility.Collapsed;
+        FirstLoginDialogPanel.Visibility = Visibility.Collapsed;
         NodeSettingsDialogPanel.Visibility = Visibility.Collapsed;
         AppSettingsDialogPanel.Visibility = Visibility.Collapsed;
         ProxyEditorPanel.Visibility = Visibility.Collapsed;
@@ -1651,7 +1807,7 @@ public partial class MainWindow : Window
             LocalIP = ProxyLocalIPTextBox.Text.Trim(),
             LocalPort = localPort,
             RemotePort = remotePort,
-            BandwidthLimit = ProxyBandwidthLimitTextBox.Text.Trim().ToUpperInvariant(),
+            BandwidthLimit = "",
             CustomDomains = ProxyCustomDomainsTextBox.Text.Trim()
         };
     }
@@ -1666,7 +1822,7 @@ public partial class MainWindow : Window
         target.RemotePort = source.RemotePort;
         target.AllocationId = source.AllocationId;
         target.RemotePortLocked = source.RemotePortLocked;
-        target.BandwidthLimit = source.BandwidthLimit;
+        target.BandwidthLimit = "";
         target.CustomDomains = source.CustomDomains;
     }
 
@@ -1688,7 +1844,6 @@ public partial class MainWindow : Window
         proxy.RemotePort = allocation.RemotePort;
         proxy.AllocationId = allocation.AllocationId;
         proxy.RemotePortLocked = allocation.Locked;
-        proxy.BandwidthLimit = allocation.BandwidthLimit;
         AppendLog($"服务端已为“{proxy.Name}”分配 {allocation.NodeName}:{allocation.RemotePort}。");
     }
 

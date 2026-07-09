@@ -81,27 +81,16 @@ public sealed class AppSettingsStore
     private AppState CreateInitialState()
     {
         var bundledFrpcPath = Path.Combine(AppContext.BaseDirectory, "frpc.exe");
-        var profile = new FrpProfile
-        {
-            Name = "新节点",
-            FrpcPath = File.Exists(bundledFrpcPath) ? bundledFrpcPath : "",
-            ServerAddr = "",
-            ServerPort = 7000,
-            Token = ""
-        };
-        profile.Proxies.Add(FrpConfigSerializer.CreateDefaultProxy());
-
         return new AppState
         {
-            LastProfileId = profile.Id,
-            ClientFrpcPath = profile.FrpcPath,
-            Profiles = new() { profile }
+            ClientFrpcPath = File.Exists(bundledFrpcPath) ? bundledFrpcPath : "",
+            Profiles = new()
         };
     }
 
     private static AppState EnsureValidState(AppState? state)
     {
-        if (state is null || state.Profiles.Count == 0)
+        if (state is null)
         {
             return new AppSettingsStore().CreateInitialState();
         }
@@ -126,7 +115,14 @@ public sealed class AppSettingsStore
             }
         }
 
-        state.LastProfileId ??= state.Profiles[0].Id;
+        if (state.Profiles.Count == 0)
+        {
+            state.LastProfileId = null;
+        }
+        else
+        {
+            state.LastProfileId ??= state.Profiles[0].Id;
+        }
         if (string.IsNullOrWhiteSpace(state.ClientFrpcPath))
         {
             state.ClientFrpcPath = state.Profiles

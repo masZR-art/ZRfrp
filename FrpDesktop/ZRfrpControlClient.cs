@@ -30,6 +30,27 @@ public sealed class ZRfrpControlClient
             ?? throw new InvalidOperationException("控制平台返回了无效登录结果。");
     }
 
+    public async Task<NodeExportDocument> ExportNodesAsync(
+        string platformUrl, string accessToken, CancellationToken cancellationToken = default)
+    {
+        if (!Uri.TryCreate(platformUrl.TrimEnd('/') + "/", UriKind.Absolute, out var baseAddress))
+        {
+            throw new InvalidOperationException("控制平台地址无效。");
+        }
+        using var client = CreateHttpClient(baseAddress);
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        using var response = await client.GetAsync("api/customer/nodes/export", cancellationToken);
+        var text = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = JsonSerializer.Deserialize<ControlError>(text, JsonOptions);
+            throw new InvalidOperationException(error?.Error ?? "节点配置导出失败。");
+        }
+        return JsonSerializer.Deserialize<NodeExportDocument>(text, JsonOptions)
+            ?? throw new InvalidOperationException("控制平台返回了无效节点配置。");
+    }
+
     public async Task<ManagedAllocation> AllocateAsync(
         FrpProfile profile, FrpProxy proxy, CancellationToken cancellationToken = default)
     {
@@ -41,7 +62,7 @@ public sealed class ZRfrpControlClient
             tunnelId = proxy.Id,
             proxyName = proxy.Name,
             proxyType = proxy.Type.ToLowerInvariant(),
-            bandwidthLimit = proxy.BandwidthLimit
+            bandwidthLimit = ""
         };
         using var content = new StringContent(JsonSerializer.Serialize(payload, JsonOptions), Encoding.UTF8, "application/json");
         using var response = await client.PostAsync("api/client/allocate", content, cancellationToken);

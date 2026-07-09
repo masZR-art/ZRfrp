@@ -125,7 +125,7 @@ app.MapGet("/api/session", (ClaimsPrincipal user) => Results.Ok(new
     role = user.FindFirstValue(ClaimTypes.Role)
 }));
 
-app.MapGet("/api/overview", async (FrpsManager frps, StateStore store, CancellationToken cancellationToken) =>
+app.MapGet("/api/overview", async (FrpsManager frps, StateStore store, ServerOptions serverOptions, CancellationToken cancellationToken) =>
 {
     var serverTask = frps.GetDashboardJsonAsync("/api/serverinfo", cancellationToken);
     var clientsTask = frps.GetDashboardJsonAsync("/api/clients", cancellationToken);
@@ -143,6 +143,8 @@ app.MapGet("/api/overview", async (FrpsManager frps, StateStore store, Cancellat
         server = serverTask.Result,
         clients = clientsTask.Result,
         proxies = new { tcp = tcpTask.Result, udp = udpTask.Result, http = httpTask.Result, https = httpsTask.Result },
+        publicHost = PublicFrpsHost(serverOptions),
+        bindPort = serverOptions.FrpsBindPort,
         allocations = store.State.Allocations.Where(item => item.Active),
         audit = store.State.Audit.Take(30)
     });
@@ -218,6 +220,18 @@ app.MapPost("/api/client/login", async (
         string.IsNullOrWhiteSpace(serverOptions.PublicHost) ? serverOptions.FrpsAddress : serverOptions.PublicHost,
         serverOptions.FrpsBindPort, serverOptions.FrpAuthToken,
         account.TrafficQuotaBytes, account.TrafficUsedBytes));
+});
+
+app.MapGet("/api/customer/nodes/export", (
+    HttpContext context, AccountService accounts, StateStore store, ServerOptions serverOptions) =>
+{
+    if (GetBearerAccount(context, accounts) is null
+        && context.User.Identity?.IsAuthenticated != true)
+    {
+        return Results.Unauthorized();
+    }
+
+    return Results.Ok(CreateNodeExport(store, serverOptions, context));
 });
 
 app.MapGet("/api/customer/me", (ClaimsPrincipal principal, AccountService accounts) =>
@@ -386,6 +400,28 @@ app.MapGet("/api/admin/nodes", (StateStore store, ServerOptions serverOptions) =
         node.Online = node.Online && node.LastSeen >= cutoff;
     }
     return Results.Ok(store.State.Nodes);
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapGet("/api/admin/nodes/export", (
+    StateStore store, ServerOptions serverOptions, HttpContext context) =>
+    Results.Ok(CreateNodeExport(store, serverOptions, context)))
+    .RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapPut("/api/admin/nodes/{id}", async (
+    string id, NodeUpdateRequest request, StateStore store) =>
+{
+    var node = store.State.Nodes.FirstOrDefault(item => item.Id == id);
+    if (node is null)
+    {
+        return Results.NotFound();
+    }
+    if (string.IsNullOrWhiteSpace(request.Name))
+    {
+        return Results.BadRequest(new { error = "节点名称不能为空。" });
+    }
+    node.Name = request.Name.Trim();
+    await store.AuditAsync("node", $"更新节点名称为 {node.Name}");
+    return Results.Ok(new { node.Name });
 }).RequireAuthorization(policy => policy.RequireRole("admin"));
 
 app.MapPost("/api/admin/nodes/{id}/service/{action}", async (
@@ -580,6 +616,50 @@ static bool ValidatePeerKey(HttpContext context, string expected)
     var right = System.Text.Encoding.UTF8.GetBytes(expected);
     return left.Length == right.Length
         && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(left, right);
+}
+
+static NodeExportDocument CreateNodeExport(StateStore store, ServerOptions options, HttpContext context)
+{
+    var platformUrl = ExternalBaseUrl(context, options);
+    var cutoff = DateTimeOffset.UtcNow.AddSeconds(-45);
+    var nodes = new List<NodeExportEntry>
+    {
+        new(
+            string.IsNullOrWhiteSpace(options.NodeId) ? "local" : options.NodeId,
+            string.IsNullOrWhiteSpace(options.NodeName) ? "本机节点" : options.NodeName,
+            PublicFrpsHost(options),
+            options.FrpsBindPort,
+            options.FrpAuthToken,
+            platformUrl)
+    };
+
+    nodes.AddRange(store.State.Nodes
+        .Where(node => node.Online && node.LastSeen >= cutoff && !string.IsNullOrWhiteSpace(node.PublicHost))
+        .Select(node => new NodeExportEntry(
+            node.Id,
+            string.IsNullOrWhiteSpace(node.Name) ? node.Id : node.Name,
+            node.PublicHost,
+            node.FrpsPort > 0 ? node.FrpsPort : options.FrpsBindPort,
+            options.FrpAuthToken,
+            platformUrl)));
+
+    return new NodeExportDocument("zrfrp-node-export", 1, platformUrl, DateTimeOffset.UtcNow, nodes);
+}
+
+static string PublicFrpsHost(ServerOptions options) =>
+    string.IsNullOrWhiteSpace(options.PublicHost) ? options.FrpsAddress : options.PublicHost;
+
+static string ExternalBaseUrl(HttpContext context, ServerOptions options)
+{
+    var host = context.Request.Headers["X-Forwarded-Host"].FirstOrDefault()
+        ?? context.Request.Host.Value;
+    var scheme = context.Request.Headers["X-Forwarded-Proto"].FirstOrDefault()
+        ?? context.Request.Scheme;
+    if (string.IsNullOrWhiteSpace(host))
+    {
+        host = PublicFrpsHost(options);
+    }
+    return $"{scheme}://{host}".TrimEnd('/');
 }
 
 static async Task InitializeSecretsAsync(StateStore store, ILogger logger)

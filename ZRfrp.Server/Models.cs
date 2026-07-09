@@ -97,6 +97,20 @@ public sealed record ClientLoginRequest(string Username, string Password, string
 public sealed record ClientLoginResponse(
     string AccountId, string Username, string AccessToken, DateTimeOffset ExpiresAt,
     string ServerAddress, int ServerPort, string FrpToken, long TrafficQuotaBytes, long TrafficUsedBytes);
+public sealed record NodeUpdateRequest(string Name);
+public sealed record NodeExportDocument(
+    string Kind,
+    int Version,
+    string PlatformUrl,
+    DateTimeOffset ExportedAt,
+    IReadOnlyList<NodeExportEntry> Nodes);
+public sealed record NodeExportEntry(
+    string Id,
+    string Name,
+    string ServerAddress,
+    int ServerPort,
+    string FrpToken,
+    string ControlApiUrl);
 public sealed record NodeHeartbeat(
     string Id, string Name, string PublicHost, string ControlUrl, int FrpsPort,
     bool Online, int ActiveClients, int ActiveProxies, string Version);
