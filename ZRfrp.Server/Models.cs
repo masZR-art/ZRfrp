@@ -30,6 +30,7 @@ public sealed class ServerState
 {
     public string AdminPasswordHash { get; set; } = "";
     public string ClientApiKeyHash { get; set; } = "";
+    public string LocalNodeName { get; set; } = "";
     public List<PortAllocation> Allocations { get; set; } = [];
     public List<AuditEntry> Audit { get; set; } = [];
     public List<UserAccount> Accounts { get; set; } = [];

@@ -145,6 +145,7 @@ app.MapGet("/api/overview", async (FrpsManager frps, StateStore store, ServerOpt
         proxies = new { tcp = tcpTask.Result, udp = udpTask.Result, http = httpTask.Result, https = httpsTask.Result },
         publicHost = PublicFrpsHost(serverOptions),
         bindPort = serverOptions.FrpsBindPort,
+        localNodeName = LocalNodeName(store, serverOptions),
         allocations = store.State.Allocations.Where(item => item.Active),
         audit = store.State.Audit.Take(30)
     });
@@ -408,16 +409,23 @@ app.MapGet("/api/admin/nodes/export", (
     .RequireAuthorization(policy => policy.RequireRole("admin"));
 
 app.MapPut("/api/admin/nodes/{id}", async (
-    string id, NodeUpdateRequest request, StateStore store) =>
+    string id, NodeUpdateRequest request, StateStore store, ServerOptions serverOptions) =>
 {
+    if (string.IsNullOrWhiteSpace(request.Name))
+    {
+        return Results.BadRequest(new { error = "节点名称不能为空。" });
+    }
+    if (id.Equals("local", StringComparison.OrdinalIgnoreCase))
+    {
+        store.State.LocalNodeName = request.Name.Trim();
+        await store.AuditAsync("node", $"更新本机节点名称为 {store.State.LocalNodeName}");
+        return Results.Ok(new { name = LocalNodeName(store, serverOptions) });
+    }
+
     var node = store.State.Nodes.FirstOrDefault(item => item.Id == id);
     if (node is null)
     {
         return Results.NotFound();
-    }
-    if (string.IsNullOrWhiteSpace(request.Name))
-    {
-        return Results.BadRequest(new { error = "节点名称不能为空。" });
     }
     node.Name = request.Name.Trim();
     await store.AuditAsync("node", $"更新节点名称为 {node.Name}");
@@ -456,10 +464,13 @@ app.MapPost("/api/peer/heartbeat", async (
     var node = store.State.Nodes.FirstOrDefault(item => item.Id == heartbeat.Id);
     if (node is null)
     {
-        node = new ManagedNode { Id = heartbeat.Id };
+        node = new ManagedNode { Id = heartbeat.Id, Name = heartbeat.Name };
         store.State.Nodes.Add(node);
     }
-    node.Name = heartbeat.Name;
+    if (string.IsNullOrWhiteSpace(node.Name))
+    {
+        node.Name = heartbeat.Name;
+    }
     node.PublicHost = heartbeat.PublicHost;
     node.ControlUrl = heartbeat.ControlUrl;
     node.FrpsPort = heartbeat.FrpsPort;
@@ -626,7 +637,7 @@ static NodeExportDocument CreateNodeExport(StateStore store, ServerOptions optio
     {
         new(
             string.IsNullOrWhiteSpace(options.NodeId) ? "local" : options.NodeId,
-            string.IsNullOrWhiteSpace(options.NodeName) ? "本机节点" : options.NodeName,
+            LocalNodeName(store, options),
             PublicFrpsHost(options),
             options.FrpsBindPort,
             options.FrpAuthToken,
@@ -648,6 +659,15 @@ static NodeExportDocument CreateNodeExport(StateStore store, ServerOptions optio
 
 static string PublicFrpsHost(ServerOptions options) =>
     string.IsNullOrWhiteSpace(options.PublicHost) ? options.FrpsAddress : options.PublicHost;
+
+static string LocalNodeName(StateStore store, ServerOptions options)
+{
+    if (!string.IsNullOrWhiteSpace(store.State.LocalNodeName))
+    {
+        return store.State.LocalNodeName;
+    }
+    return string.IsNullOrWhiteSpace(options.NodeName) ? "本机节点" : options.NodeName;
+}
 
 static string ExternalBaseUrl(HttpContext context, ServerOptions options)
 {
