@@ -2,11 +2,17 @@ using System.Security.Claims;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Json;
 using ZRfrp.Server;
 
 var builder = WebApplication.CreateBuilder(args);
 var options = builder.Configuration.GetSection("ZRfrp").Get<ServerOptions>() ?? new();
+var dataProtectionDirectory = Path.Combine(options.DataDirectory, "keys");
+Directory.CreateDirectory(dataProtectionDirectory);
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionDirectory))
+    .SetApplicationName("ZRfrp.Server");
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton<StateStore>();
 builder.Services.AddSingleton<FrpsManager>();

@@ -1,4 +1,10 @@
-# ZRfrp v2.0.2
+# ZRfrp v2.0.3
+
+- 将 Web 登录 Cookie 的 Data Protection 密钥持久化到 `/var/lib/zrfrp/keys`。
+- 修复服务重启、安装或更新后现有登录会话立即失效的问题。
+- systemd 明确授权服务写入持久化密钥目录。
+
+## v2.0.2
 
 - 修复 `NoNewPrivileges=true` 阻止面板执行受限维护命令的问题。
 - 安装器现在会重启现有服务，确保新的 systemd 安全策略立即生效。

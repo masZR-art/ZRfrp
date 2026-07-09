@@ -15,7 +15,7 @@ EnvironmentFile=-/etc/zrfrp/zrfrp.env
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/etc/zrfrp /var/lib/zrfrp /var/log/zrfrp
+ReadWritePaths=/etc/zrfrp /var/lib/zrfrp /var/lib/zrfrp/keys /var/log/zrfrp
 
 [Install]
 WantedBy=multi-user.target

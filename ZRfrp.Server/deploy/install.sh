@@ -27,7 +27,7 @@ fi
 FRP_URL="https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_${FRP_ARCH}.tar.gz"
 
 id -u zrfrp >/dev/null 2>&1 || useradd --system --home /var/lib/zrfrp --shell /usr/sbin/nologin zrfrp
-install -d -o zrfrp -g zrfrp /opt/zrfrp/server /etc/zrfrp /var/lib/zrfrp /var/log/zrfrp
+install -d -o zrfrp -g zrfrp /opt/zrfrp/server /etc/zrfrp /var/lib/zrfrp /var/lib/zrfrp/keys /var/log/zrfrp
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
