@@ -569,7 +569,9 @@ app.MapPost("/frp-plugin", async (
             return Results.Ok(new { reject = true, reject_reason = "ZRfrp: account is unavailable or over quota" });
         }
         var proxyName = content["proxy_name"]?.GetValue<string>() ?? "";
-        var allocation = allocations.FindForPlugin(clientId, proxyName);
+        var proxyMetas = content["metas"] as JsonObject;
+        var tunnelId = proxyMetas?["zrfrp_tunnel_id"]?.GetValue<string>() ?? "";
+        var allocation = allocations.FindForPlugin(clientId, proxyName, tunnelId);
         if (allocation is null || allocation.AccountId != account.Id)
         {
             return Results.Ok(new { reject = true, reject_reason = "ZRfrp: tunnel has no active server allocation" });

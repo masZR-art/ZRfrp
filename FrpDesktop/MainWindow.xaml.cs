@@ -641,7 +641,7 @@ public partial class MainWindow : Window
 
             var profile = new FrpProfile
             {
-                Name = string.IsNullOrWhiteSpace(node.Name) ? $"节点-{_state.Profiles.Count + 1}" : node.Name,
+                Name = NormalizeImportedNodeName(node, _state.Profiles.Count + 1),
                 FrpcPath = _state.ClientFrpcPath,
                 ServerAddr = node.ServerAddress,
                 ServerPort = node.ServerPort,
@@ -667,6 +667,22 @@ public partial class MainWindow : Window
 
         ProxyProfileComboBox.Items.Refresh();
         return imported;
+    }
+
+    private static string NormalizeImportedNodeName(NodeExportEntry node, int index)
+    {
+        var name = (node.Name ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(name)
+            || name.Length > 18
+            || Regex.IsMatch(name, @"^[A-Za-z0-9_-]{16,}$"))
+        {
+            var address = string.IsNullOrWhiteSpace(node.ServerAddress)
+                ? index.ToString()
+                : node.ServerAddress;
+            return $"节点-{address}";
+        }
+
+        return name;
     }
 
     private void BrowseFrpcButton_Click(object sender, RoutedEventArgs e)

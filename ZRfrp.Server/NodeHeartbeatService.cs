@@ -27,7 +27,7 @@ public sealed class NodeHeartbeatService : BackgroundService
             {
                 var heartbeat = new NodeHeartbeat(
                     string.IsNullOrWhiteSpace(_options.NodeId) ? Environment.MachineName : _options.NodeId,
-                    string.IsNullOrWhiteSpace(_options.NodeName) ? Environment.MachineName : _options.NodeName,
+                    string.IsNullOrWhiteSpace(_options.NodeName) ? "ZRfrp 节点" : _options.NodeName,
                     _options.PublicHost,
                     $"http://{_options.PublicHost}:7600",
                     _options.FrpsBindPort,

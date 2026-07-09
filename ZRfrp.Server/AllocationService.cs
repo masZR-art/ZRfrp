@@ -97,11 +97,13 @@ public sealed class AllocationService
         return true;
     }
 
-    public PortAllocation? FindForPlugin(string clientId, string proxyName) =>
+    public PortAllocation? FindForPlugin(string clientId, string proxyName, string tunnelId) =>
         _store.State.Allocations.FirstOrDefault(item =>
             item.Active
             && item.ClientId.Equals(clientId, StringComparison.Ordinal)
-            && item.ProxyName.Equals(proxyName, StringComparison.Ordinal));
+            && (!string.IsNullOrWhiteSpace(tunnelId)
+                ? item.TunnelId.Equals(tunnelId, StringComparison.Ordinal)
+                : item.ProxyName.Equals(proxyName, StringComparison.Ordinal)));
 
     private AllocationResponse ToResponse(PortAllocation allocation) => new(
         allocation.Id,
