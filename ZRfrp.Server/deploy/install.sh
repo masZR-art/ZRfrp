@@ -40,6 +40,7 @@ if [[ -z "${SERVER_DIR}" ]]; then
   echo "更新包结构无效：未找到 zrfrp-server。" >&2
   exit 1
 fi
+systemctl stop zrfrp-server 2>/dev/null || true
 cp -a "${SERVER_DIR}/." /opt/zrfrp/server/
 chmod 0755 /opt/zrfrp/server/zrfrp-server
 
@@ -133,7 +134,6 @@ chmod 0640 /etc/zrfrp/frps.toml
 chmod 0640 /opt/zrfrp/server/appsettings.Production.json
 
 if [[ -n "${ZRFRP_RESET_ADMIN_PASSWORD:-}" ]]; then
-  systemctl stop zrfrp-server 2>/dev/null || true
   (
     cd /opt/zrfrp/server
     sudo -u zrfrp ./zrfrp-server --reset-admin "${ZRFRP_RESET_ADMIN_PASSWORD}"

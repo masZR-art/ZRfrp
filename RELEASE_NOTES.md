@@ -1,4 +1,10 @@
-# ZRfrp v2.0.9
+# ZRfrp v2.0.10
+
+- 修复升级时覆盖正在运行的 `/opt/zrfrp/server/zrfrp-server` 触发 `Text file busy` 的问题。
+- SSH 安装脚本会在覆盖服务端主程序前先停止 `zrfrp-server`。
+- 面板更新会先解压到 staging 目录，再由后台任务停止服务、替换文件并重新启动。
+
+## v2.0.9
 
 - 修复 Server 发布包包含顶层目录时，安装/更新脚本没有正确覆盖 `/opt/zrfrp/server/zrfrp-server` 的问题。
 - 面板更新完成后使用唯一 systemd 临时单元触发重启，失败时自动退回后台 `systemctl restart`。

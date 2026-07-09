@@ -37,10 +37,14 @@ if [[ -z "${SERVER_DIR}" ]]; then
   echo "更新包结构无效：未找到 zrfrp-server。" >&2
   exit 1
 fi
-cp -a "${SERVER_DIR}/." /opt/zrfrp/server/
-chmod 0755 /opt/zrfrp/server/zrfrp-server
-chown -R zrfrp:zrfrp /opt/zrfrp/server
+STAGING="/opt/zrfrp/server-update-${RID}-$(date +%s)"
+rm -rf "${STAGING}"
+install -d -o root -g root "${STAGING}"
+cp -a "${SERVER_DIR}/." "${STAGING}/"
+chmod 0755 "${STAGING}/zrfrp-server"
+chown -R zrfrp:zrfrp "${STAGING}"
 UNIT="zrfrp-update-restart-$(date +%s)"
-if ! systemd-run --collect --unit="${UNIT}" --on-active=2s /usr/bin/systemctl restart zrfrp-server zrfrp-frps; then
-  nohup /bin/sh -c 'sleep 2; /usr/bin/systemctl restart zrfrp-server zrfrp-frps' >/dev/null 2>&1 &
+UPDATE_CMD="sleep 2; systemctl stop zrfrp-server zrfrp-frps 2>/dev/null || true; cp -a '${STAGING}/.' /opt/zrfrp/server/; chown -R zrfrp:zrfrp /opt/zrfrp/server; chmod 0755 /opt/zrfrp/server/zrfrp-server; rm -rf '${STAGING}'; systemctl daemon-reload; systemctl start zrfrp-server zrfrp-frps"
+if ! systemd-run --collect --unit="${UNIT}" --on-active=1s /bin/sh -c "${UPDATE_CMD}"; then
+  nohup /bin/sh -c "${UPDATE_CMD}" >/dev/null 2>&1 &
 fi
