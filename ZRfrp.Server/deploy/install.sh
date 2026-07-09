@@ -100,14 +100,58 @@ zrfrp ALL=(root) NOPASSWD: ${SYSTEMCTL_PATH} start zrfrp-frps, ${SYSTEMCTL_PATH}
 EOF
 chmod 0440 /etc/sudoers.d/zrfrp
 
-PUBLIC_HOST="${ZRFRP_PUBLIC_HOST:-}"
-if [[ -z "${PUBLIC_HOST}" && -f /opt/zrfrp/server/appsettings.Production.json ]]; then
-  PUBLIC_HOST="$(sed -n 's/.*"PublicHost"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    /opt/zrfrp/server/appsettings.Production.json | head -n 1)"
-fi
-if [[ -z "${PUBLIC_HOST}" ]]; then
-  PUBLIC_HOST="$(curl -4 --fail --silent --max-time 4 https://api.ipify.org \
-    || hostname -I | awk '{print $1}')"
+is_private_ip() {
+  local ip="${1:-}"
+  [[ -z "${ip}" ]] && return 0
+  [[ "${ip}" =~ ^10\. ]] && return 0
+  [[ "${ip}" =~ ^127\. ]] && return 0
+  [[ "${ip}" =~ ^169\.254\. ]] && return 0
+  [[ "${ip}" =~ ^192\.168\. ]] && return 0
+  [[ "${ip}" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]] && return 0
+  return 1
+}
+
+read_existing_public_host() {
+  [[ -f /opt/zrfrp/server/appsettings.Production.json ]] || return 0
+  sed -n 's/.*"PublicHost"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    /opt/zrfrp/server/appsettings.Production.json | head -n 1
+}
+
+detect_public_host() {
+  local candidate="${ZRFRP_PUBLIC_HOST:-}"
+  if ! is_private_ip "${candidate}"; then
+    echo "${candidate}"
+    return 0
+  fi
+
+  candidate="$(read_existing_public_host)"
+  if ! is_private_ip "${candidate}"; then
+    echo "${candidate}"
+    return 0
+  fi
+
+  for endpoint in \
+    "https://api.ipify.org" \
+    "https://ipv4.icanhazip.com" \
+    "https://ifconfig.me/ip"; do
+    candidate="$(curl -4 --fail --silent --max-time 6 "${endpoint}" | tr -d '[:space:]' || true)"
+    if ! is_private_ip "${candidate}"; then
+      echo "${candidate}"
+      return 0
+    fi
+  done
+
+  candidate="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)"
+  if [[ -n "${candidate}" ]]; then
+    echo "${candidate}"
+  else
+    hostname -I | awk '{print $1}'
+  fi
+}
+
+PUBLIC_HOST="$(detect_public_host)"
+if is_private_ip "${PUBLIC_HOST}"; then
+  echo "warn: 未能自动检测公网 IP，当前得到 ${PUBLIC_HOST:-空值}。如服务器位于 NAT 后，请使用 ZRFRP_PUBLIC_HOST=公网IP 重新安装。"
 fi
 
 if [[ ! -f /opt/zrfrp/server/appsettings.Production.json ]]; then
