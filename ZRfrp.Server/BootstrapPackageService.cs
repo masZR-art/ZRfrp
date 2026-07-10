@@ -69,14 +69,16 @@ public sealed class BootstrapPackageService
             var temporary = destination + $".{Guid.NewGuid():N}.tmp";
             try
             {
-                using var response = await _http.GetAsync(
-                    url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                response.EnsureSuccessStatusCode();
-                await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
-                await using var target = new FileStream(
-                    temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1024 * 128, true);
-                await source.CopyToAsync(target, cancellationToken);
-                await target.FlushAsync(cancellationToken);
+                using (var response = await _http.GetAsync(
+                           url, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
+                {
+                    response.EnsureSuccessStatusCode();
+                    await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+                    await using var target = new FileStream(
+                        temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1024 * 128, true);
+                    await source.CopyToAsync(target, cancellationToken);
+                    await target.FlushAsync(cancellationToken);
+                }
                 File.Move(temporary, destination, true);
             }
             finally
