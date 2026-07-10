@@ -113,6 +113,11 @@ if [[ -z "${PUBLIC_HOST}" ]]; then
     || hostname -I | awk '{print $1}')"
 fi
 
+# Persist the address passed by the master even on a reinstall. Environment
+# configuration takes precedence over a stale appsettings.Production.json.
+sed -i '/^ZRfrp__PublicHost=/d' /etc/zrfrp/zrfrp.env
+printf 'ZRfrp__PublicHost=%s\n' "${PUBLIC_HOST}" >>/etc/zrfrp/zrfrp.env
+
 if [[ ! -f /opt/zrfrp/server/appsettings.Production.json ]]; then
   cat >/opt/zrfrp/server/appsettings.Production.json <<EOF
 {

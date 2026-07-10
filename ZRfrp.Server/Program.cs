@@ -915,9 +915,25 @@ app.MapPost("/api/client/allocate", async (
     {
         return Results.BadRequest(new { error = "远程节点返回了不匹配的节点标识，分配已拒绝。" });
     }
-    return peerAllocation is null
-        ? Results.BadRequest(new { error = "远程节点返回了无效分配结果。" })
-        : Results.Ok(peerAllocation);
+    if (peerAllocation is null)
+    {
+        return Results.BadRequest(new { error = "远程节点返回了无效分配结果。" });
+    }
+
+    // The master owns the externally reachable address. A cloud node may only
+    // see its private NIC address, so never leak the node-local discovery result
+    // into the desktop allocation response.
+    var publicAllocation = peerAllocation with
+    {
+        NodeName = DecoratedNodeName(
+            string.IsNullOrWhiteSpace(node.Name) ? node.Id : node.Name,
+            NodeFlagCode(node.FlagCode, node.Name)),
+        ServerAddress = node.PublicHost,
+        ServerPort = node.FrpsPort > 0 ? node.FrpsPort : serverOptions.FrpsBindPort,
+        Locked = true,
+        NodeId = node.Id
+    };
+    return Results.Ok(publicAllocation);
 });
 
 app.MapDelete("/api/client/allocations/{id}", async (

@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>zrfrp-server</AssemblyName>
     <Product>ZRfrp Server</Product>
-    <Version>2.1.17</Version>
+    <Version>2.1.18</Version>
     <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
   </PropertyGroup>
   <ItemGroup>
