@@ -6,7 +6,7 @@ namespace ZRfrp.Server;
 public sealed class BootstrapPackageService
 {
     private const string Repository = "masZR-art/ZRfrp";
-    private const string FrpVersion = "0.69.1";
+    public const string FrpVersion = "0.69.1";
     private readonly string _cacheDirectory;
     private readonly HttpClient _http;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();

@@ -1,4 +1,11 @@
-# ZRfrp v2.1.19
+# ZRfrp v2.1.20
+
+- 主控“添加节点”新增离线/SCP 部署方式，解决主控到新节点带宽过低时大文件传输缓慢的问题。
+- Windows 可直接从官方 GitHub 下载对应架构的 ZRfrp Server 与 frps，再通过 SCP 上传新节点。
+- 主控只提供包含节点身份和密钥的轻量专属部署脚本；脚本使用本地安装包完成注册，成功后自动删除自身。
+- 面板可选择 x64/arm64 架构、下载专属脚本并一键复制完整 PowerShell 下载与上传命令。
+
+## v2.1.19
 
 - 安装和更新节点时强制同步控制面导出的 frp Token 与 `frps.toml`，修复 `token in login doesn't match token from configuration`。
 - 主控面板聚合所有在线远程节点的活动通道，并显示每条通道所属节点。

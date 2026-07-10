@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -121,6 +122,34 @@ app.MapGet("/api/bootstrap/node/{token}/installer", async (
         return Results.NotFound();
     }
     return Results.Text(await packages.ReadInstallerAsync(), "text/x-shellscript");
+});
+
+app.MapGet("/api/bootstrap/node/{token}/offline/{rid}.sh", async (
+    string token,
+    string rid,
+    StateStore store,
+    ServerOptions serverOptions,
+    BootstrapPackageService packages) =>
+{
+    var node = FindEnrollmentNode(store, token);
+    if (node is null)
+    {
+        return Results.NotFound();
+    }
+    if (rid is not ("linux-x64" or "linux-arm64"))
+    {
+        return Results.BadRequest(new { error = "不支持的节点架构。" });
+    }
+    var script = CreateOfflineBootstrapScript(
+        node,
+        rid,
+        serverOptions.PeerKey,
+        serverOptions.FrpAuthToken,
+        await packages.ReadInstallerAsync());
+    return Results.File(
+        Encoding.UTF8.GetBytes(script),
+        "text/x-shellscript",
+        "zrfrp-node-offline.sh");
 });
 
 app.MapGet("/api/bootstrap/node/{token}/server/{rid}", async (
@@ -644,6 +673,8 @@ app.MapPost("/api/admin/nodes/enrollment", async (
     {
         return Results.BadRequest(new { error = "主控尚未配置节点 Peer Key，请重新安装或检查服务端配置。" });
     }
+    var rid = request.Architecture == "linux-arm64" ? "linux-arm64" : "linux-x64";
+    var frpArch = rid == "linux-arm64" ? "arm64" : "amd64";
 
     var id = $"node-{Guid.NewGuid():N}"[..17];
     var enrollmentToken = Security.CreateSecret(32);
@@ -666,10 +697,20 @@ app.MapPost("/api/admin/nodes/enrollment", async (
     store.State.Nodes.Add(node);
     await store.AuditAsync("node", $"创建待接入节点 {name} ({publicHost})");
 
+    var bootstrapPrefix =
+        $"{node.EnrollmentMasterUrl}/api/bootstrap/node/{Uri.EscapeDataString(enrollmentToken)}";
+    var serverFileName = $"zrfrp-server-{rid}.tar.gz";
+    var frpFileName = $"frp_{BootstrapPackageService.FrpVersion}_linux_{frpArch}.tar.gz";
+
     return Results.Ok(new NodeEnrollmentResponse(
         id,
         name,
-        CreateNodeEnrollmentCommand(node.EnrollmentMasterUrl, enrollmentToken)));
+        CreateNodeEnrollmentCommand(node.EnrollmentMasterUrl, enrollmentToken),
+        $"{bootstrapPrefix}/offline/{rid}.sh",
+        $"https://github.com/masZR-art/ZRfrp/releases/download/v{UpdateService.CurrentVersion}/{serverFileName}",
+        $"https://github.com/fatedier/frp/releases/download/v{BootstrapPackageService.FrpVersion}/{frpFileName}",
+        serverFileName,
+        frpFileName));
 }).RequireAuthorization(policy => policy.RequireRole("admin"));
 
 app.MapGet("/api/admin/nodes/export", (
@@ -1485,6 +1526,50 @@ static string CreateMasterBootstrapScript(
         $"export ZRFRP_PEER_KEY={ShellQuote(peerKey)}",
         $"export ZRFRP_FRP_TOKEN={ShellQuote(frpAuthToken)}",
         "curl --fail --silent --show-error --location \"${PREFIX}/installer\" | bash"
+    ]);
+}
+
+static string CreateOfflineBootstrapScript(
+    ManagedNode node,
+    string rid,
+    string peerKey,
+    string frpAuthToken,
+    string installer)
+{
+    var machineArchitecture = rid == "linux-arm64" ? "aarch64|arm64" : "x86_64|amd64";
+    var frpArch = rid == "linux-arm64" ? "arm64" : "amd64";
+    var serverFileName = $"zrfrp-server-{rid}.tar.gz";
+    var frpFileName = $"frp_{BootstrapPackageService.FrpVersion}_linux_{frpArch}.tar.gz";
+    return string.Join('\n',
+    [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "SCRIPT_PATH=\"$(readlink -f \"$0\")\"",
+        "BASE_DIR=\"$(dirname \"${SCRIPT_PATH}\")\"",
+        $"case \"$(uname -m)\" in {machineArchitecture}) ;; *) echo \"安装包与服务器架构不匹配: $(uname -m)\" >&2; exit 1 ;; esac",
+        $"SERVER_FILE=\"${{BASE_DIR}}/{serverFileName}\"",
+        $"FRP_FILE=\"${{BASE_DIR}}/{frpFileName}\"",
+        "[[ -s \"${SERVER_FILE}\" ]] || { echo \"缺少 ${SERVER_FILE}\" >&2; exit 1; }",
+        "[[ -s \"${FRP_FILE}\" ]] || { echo \"缺少 ${FRP_FILE}\" >&2; exit 1; }",
+        "export ZRFRP_SERVER_URL=\"file://${SERVER_FILE}\"",
+        "export ZRFRP_FRP_URL=\"file://${FRP_FILE}\"",
+        "export ZRFRP_REINSTALL_FRPS=1",
+        "export ZRFRP_MODE=node",
+        $"export ZRFRP_NODE_ID={ShellQuote(node.Id)}",
+        $"export ZRFRP_NODE_NAME={ShellQuote(node.Name)}",
+        $"export ZRFRP_PUBLIC_HOST={ShellQuote(node.PublicHost)}",
+        $"export ZRFRP_MASTER_URL={ShellQuote(node.EnrollmentMasterUrl.TrimEnd('/'))}",
+        $"export ZRFRP_MASTER_KEY={ShellQuote(peerKey)}",
+        $"export ZRFRP_PEER_KEY={ShellQuote(peerKey)}",
+        $"export ZRFRP_FRP_TOKEN={ShellQuote(frpAuthToken)}",
+        "INSTALLER=\"$(mktemp)\"",
+        "trap 'rm -f \"${INSTALLER}\"' EXIT",
+        "cat >\"${INSTALLER}\" <<'__ZRFRP_OFFLINE_INSTALLER__'",
+        installer.TrimEnd(),
+        "__ZRFRP_OFFLINE_INSTALLER__",
+        "bash \"${INSTALLER}\"",
+        "rm -f -- \"${SCRIPT_PATH}\"",
+        "echo \"离线部署完成，包含节点密钥的部署脚本已自动删除。\""
     ]);
 }
 

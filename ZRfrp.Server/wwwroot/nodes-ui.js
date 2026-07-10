@@ -114,6 +114,23 @@ const enrollmentFlagSelect = $("#node-enrollment-flag");
 const enrollmentFlagImage = $("#node-enrollment-flag-image");
 enrollmentFlagSelect.onchange = () => updateFlagPreview(enrollmentFlagSelect, enrollmentFlagImage);
 
+function powerShellQuote(value) {
+  return "'" + String(value || "").replaceAll("'", "''") + "'";
+}
+
+function offlineDeploymentCommand(result, host) {
+  return [
+    "$dir = Join-Path $env:USERPROFILE 'Downloads\\ZRfrp-node'",
+    "New-Item -ItemType Directory -Force -Path $dir | Out-Null",
+    "Invoke-WebRequest " + powerShellQuote(result.serverPackageUrl) + " -OutFile (Join-Path $dir " + powerShellQuote(result.serverFileName) + ")",
+    "Invoke-WebRequest " + powerShellQuote(result.frpPackageUrl) + " -OutFile (Join-Path $dir " + powerShellQuote(result.frpFileName) + ")",
+    "Invoke-WebRequest " + powerShellQuote(result.offlineScriptUrl) + " -OutFile (Join-Path $dir 'zrfrp-node-offline.sh')",
+    "ssh " + powerShellQuote("root@" + host) + " 'mkdir -p /tmp/zrfrp-node'",
+    "scp (Join-Path $dir " + powerShellQuote(result.serverFileName) + ") (Join-Path $dir " + powerShellQuote(result.frpFileName) + ") (Join-Path $dir 'zrfrp-node-offline.sh') " + powerShellQuote("root@" + host + ":/tmp/zrfrp-node/"),
+    "ssh " + powerShellQuote("root@" + host) + " 'bash /tmp/zrfrp-node/zrfrp-node-offline.sh'"
+  ].join("\r\n");
+}
+
 $("#node-enrollment-form").onsubmit = async event => {
   event.preventDefault();
   const status = $("#node-enrollment-status");
@@ -126,12 +143,18 @@ $("#node-enrollment-form").onsubmit = async event => {
         name: $("#node-enrollment-name").value,
         publicHost: $("#node-enrollment-host").value,
         masterUrl: $("#node-enrollment-master-url").value,
-        flagCode: $("#node-enrollment-flag").value
+        flagCode: $("#node-enrollment-flag").value,
+        architecture: $("#node-enrollment-architecture").value
       })
     });
     command.value = result.command;
     command.classList.remove("hidden");
     $("#node-enrollment-actions").classList.remove("hidden");
+    const offlineCommand = $("#node-offline-command");
+    offlineCommand.value = offlineDeploymentCommand(result, $("#node-enrollment-host").value.trim());
+    offlineCommand.dataset.scriptUrl = result.offlineScriptUrl;
+    offlineCommand.classList.remove("hidden");
+    $("#node-offline-actions").classList.remove("hidden");
     status.textContent = "节点 " + result.name + " 已登记，执行下方命令后将自动上线。";
     toast("节点部署命令已生成");
     snapshot = null;
@@ -140,4 +163,23 @@ $("#node-enrollment-form").onsubmit = async event => {
     status.textContent = error.message;
     toast(error.message);
   }
+};
+
+$("#download-node-offline-script").onclick = () => {
+  const url = $("#node-offline-command").dataset.scriptUrl;
+  if (!url) return;
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "zrfrp-node-offline.sh";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+};
+
+$("#copy-node-offline-command").onclick = async () => {
+  const command = $("#node-offline-command");
+  try {
+    await copyText(command.value, command);
+    toast("Windows 离线部署命令已复制");
+  } catch (error) { toast(error.message); }
 };

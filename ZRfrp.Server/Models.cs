@@ -120,8 +120,17 @@ public sealed record LoginRequest(string Username, string Password);
 public sealed record PasswordChangeRequest(string CurrentPassword, string NewPassword);
 public sealed record AccountRequest(string Username, string Password, string Role, long TrafficQuotaBytes, bool Enabled);
 public sealed record RegistrationSettingsRequest(bool Enabled, long DefaultTrafficQuotaBytes);
-public sealed record NodeEnrollmentRequest(string Name, string PublicHost, string MasterUrl, string? FlagCode);
-public sealed record NodeEnrollmentResponse(string Id, string Name, string Command);
+public sealed record NodeEnrollmentRequest(
+    string Name, string PublicHost, string MasterUrl, string? FlagCode, string? Architecture);
+public sealed record NodeEnrollmentResponse(
+    string Id,
+    string Name,
+    string Command,
+    string OfflineScriptUrl,
+    string ServerPackageUrl,
+    string FrpPackageUrl,
+    string ServerFileName,
+    string FrpFileName);
 public sealed record ClientLoginRequest(string Username, string Password, string ClientId);
 public sealed record ClientLoginResponse(
     string AccountId, string Username, string AccessToken, DateTimeOffset ExpiresAt,

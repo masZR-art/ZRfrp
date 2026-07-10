@@ -11,9 +11,9 @@
     <Product>ZRfrp</Product>
     <Description>Visual frp desktop client for Windows</Description>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <AssemblyVersion>2.1.19.0</AssemblyVersion>
-    <FileVersion>2.1.19.0</FileVersion>
-    <Version>2.1.19</Version>
+    <AssemblyVersion>2.1.20.0</AssemblyVersion>
+    <FileVersion>2.1.20.0</FileVersion>
+    <Version>2.1.20</Version>
   </PropertyGroup>
 
   <ItemGroup>
