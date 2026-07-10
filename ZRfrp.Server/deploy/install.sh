@@ -19,7 +19,9 @@ esac
 command -v curl >/dev/null || { echo "需要先安装 curl。" >&2; exit 1; }
 command -v tar >/dev/null || { echo "需要先安装 tar。" >&2; exit 1; }
 
-if [[ "${VERSION}" == "latest" ]]; then
+if [[ -n "${ZRFRP_SERVER_URL:-}" ]]; then
+  RELEASE_URL="${ZRFRP_SERVER_URL}"
+elif [[ "${VERSION}" == "latest" ]]; then
   RELEASE_URL="https://github.com/${REPOSITORY}/releases/latest/download/zrfrp-server-${RID}.tar.gz"
 else
   RELEASE_URL="https://github.com/${REPOSITORY}/releases/download/${VERSION}/zrfrp-server-${RID}.tar.gz"

@@ -902,7 +902,9 @@ public partial class MainWindow : Window
             }
             await _updateService.DownloadAndApplyAsync(_desktopUpdate, _store.AppDataDirectory);
             _isReallyExiting = true;
-            Close();
+            _floatingPanelWindow?.Close();
+            DisposeTrayIcon();
+            System.Windows.Application.Current.Shutdown(0);
         }
         catch (Exception exception)
         {

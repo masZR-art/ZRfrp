@@ -25,6 +25,7 @@ builder.Services.AddSingleton<AllocationService>();
 builder.Services.AddSingleton<AccountService>();
 builder.Services.AddSingleton<FrpsConfigService>();
 builder.Services.AddSingleton<UpdateService>();
+builder.Services.AddSingleton<BootstrapPackageService>();
 builder.Services.AddHostedService<NodeHeartbeatService>();
 builder.Services.AddHostedService<TrafficCollector>();
 builder.Services.Configure<JsonOptions>(json => json.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase);
@@ -95,6 +96,71 @@ app.UseStaticFiles(new StaticFileOptions
 });
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.MapGet("/api/bootstrap/node/{token}/install.sh", (
+    string token, StateStore store, ServerOptions serverOptions) =>
+{
+    var node = FindEnrollmentNode(store, token);
+    return node is null
+        ? Results.NotFound()
+        : Results.Text(
+            CreateMasterBootstrapScript(node, token, serverOptions.PeerKey),
+            "text/x-shellscript");
+});
+
+app.MapGet("/api/bootstrap/node/{token}/installer", async (
+    string token, StateStore store, BootstrapPackageService packages) =>
+{
+    if (FindEnrollmentNode(store, token) is null)
+    {
+        return Results.NotFound();
+    }
+    return Results.Text(await packages.ReadInstallerAsync(), "text/x-shellscript");
+});
+
+app.MapGet("/api/bootstrap/node/{token}/server/{rid}", async (
+    string token,
+    string rid,
+    StateStore store,
+    BootstrapPackageService packages,
+    CancellationToken cancellationToken) =>
+{
+    if (FindEnrollmentNode(store, token) is null)
+    {
+        return Results.NotFound();
+    }
+    try
+    {
+        var path = await packages.GetServerPackageAsync(rid, cancellationToken);
+        return Results.File(path, "application/gzip", Path.GetFileName(path), enableRangeProcessing: true);
+    }
+    catch (ArgumentOutOfRangeException exception)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+});
+
+app.MapGet("/api/bootstrap/node/{token}/frp/{arch}", async (
+    string token,
+    string arch,
+    StateStore store,
+    BootstrapPackageService packages,
+    CancellationToken cancellationToken) =>
+{
+    if (FindEnrollmentNode(store, token) is null)
+    {
+        return Results.NotFound();
+    }
+    try
+    {
+        var path = await packages.GetFrpPackageAsync(arch, cancellationToken);
+        return Results.File(path, "application/gzip", Path.GetFileName(path), enableRangeProcessing: true);
+    }
+    catch (ArgumentOutOfRangeException exception)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+});
 
 app.MapPost("/api/auth/login", async (LoginRequest request, HttpContext context, AccountService accounts) =>
 {
@@ -514,7 +580,8 @@ app.MapPost("/api/admin/nodes/enrollment", async (
     }
 
     var id = $"node-{Guid.NewGuid():N}"[..17];
-    store.State.Nodes.Add(new ManagedNode
+    var enrollmentToken = Security.CreateSecret(32);
+    var node = new ManagedNode
     {
         Id = id,
         Name = name,
@@ -524,14 +591,18 @@ app.MapPost("/api/admin/nodes/enrollment", async (
         ControlUrl = $"http://{publicHost}:7600",
         FrpsPort = serverOptions.FrpsBindPort,
         Online = false,
-        LastSeen = DateTimeOffset.UtcNow
-    });
+        LastSeen = DateTimeOffset.UtcNow,
+        EnrollmentTokenHash = Security.HashToken(enrollmentToken),
+        EnrollmentExpiresAt = DateTimeOffset.UtcNow.AddHours(2),
+        EnrollmentMasterUrl = masterUri.ToString().TrimEnd('/')
+    };
+    store.State.Nodes.Add(node);
     await store.AuditAsync("node", $"创建待接入节点 {name} ({publicHost})");
 
     return Results.Ok(new NodeEnrollmentResponse(
         id,
         name,
-        CreateNodeEnrollmentCommand(id, name, publicHost, masterUri.ToString().TrimEnd('/'), serverOptions.PeerKey)));
+        CreateNodeEnrollmentCommand(node.EnrollmentMasterUrl, enrollmentToken)));
 }).RequireAuthorization(policy => policy.RequireRole("admin"));
 
 app.MapGet("/api/admin/nodes/export", (
@@ -671,6 +742,8 @@ app.MapPost("/api/peer/heartbeat", async (
     node.ActiveProxies = heartbeat.ActiveProxies;
     node.Version = heartbeat.Version;
     node.LastSeen = DateTimeOffset.UtcNow;
+    node.EnrollmentTokenHash = "";
+    node.EnrollmentExpiresAt = default;
     await store.SaveAsync();
     return Results.Ok();
 });
@@ -1024,15 +1097,48 @@ static async Task InitializeSecretsAsync(StateStore store, ILogger logger)
     }
 }
 
-static string CreateNodeEnrollmentCommand(
-    string nodeId, string name, string publicHost, string masterUrl, string peerKey)
+static string CreateNodeEnrollmentCommand(string masterUrl, string token) =>
+    $"curl -fsSL {ShellQuote($"{masterUrl}/api/bootstrap/node/{Uri.EscapeDataString(token)}/install.sh")} | sudo bash";
+
+static ManagedNode? FindEnrollmentNode(StateStore store, string token)
 {
-    const string installer = "https://raw.githubusercontent.com/3317603015whw-art/ZRfrp/main/ZRfrp.Server/deploy/install.sh";
-    return $"curl -fsSL {ShellQuote(installer)} | sudo env "
-           + $"ZRFRP_MODE=node ZRFRP_NODE_ID={ShellQuote(nodeId)} "
-           + $"ZRFRP_NODE_NAME={ShellQuote(name)} ZRFRP_PUBLIC_HOST={ShellQuote(publicHost)} "
-           + $"ZRFRP_MASTER_URL={ShellQuote(masterUrl)} ZRFRP_MASTER_KEY={ShellQuote(peerKey)} "
-           + $"ZRFRP_PEER_KEY={ShellQuote(peerKey)} bash";
+    if (string.IsNullOrWhiteSpace(token))
+    {
+        return null;
+    }
+    var now = DateTimeOffset.UtcNow;
+    return store.State.Nodes.FirstOrDefault(node =>
+        node.EnrollmentExpiresAt > now
+        && !string.IsNullOrWhiteSpace(node.EnrollmentTokenHash)
+        && Security.VerifyToken(token, node.EnrollmentTokenHash));
+}
+
+static string CreateMasterBootstrapScript(ManagedNode node, string token, string peerKey)
+{
+    var prefix =
+        $"{node.EnrollmentMasterUrl.TrimEnd('/')}/api/bootstrap/node/{Uri.EscapeDataString(token)}";
+    return string.Join('\n',
+    [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "case \"$(uname -m)\" in",
+        "  x86_64|amd64) RID=\"linux-x64\"; FRP_ARCH=\"amd64\" ;;",
+        "  aarch64|arm64) RID=\"linux-arm64\"; FRP_ARCH=\"arm64\" ;;",
+        "  *) echo \"暂不支持的架构: $(uname -m)\" >&2; exit 1 ;;",
+        "esac",
+        $"PREFIX={ShellQuote(prefix)}",
+        "export ZRFRP_SERVER_URL=\"${PREFIX}/server/${RID}\"",
+        "export ZRFRP_FRP_URL=\"${PREFIX}/frp/${FRP_ARCH}\"",
+        "export ZRFRP_REINSTALL_FRPS=1",
+        "export ZRFRP_MODE=node",
+        $"export ZRFRP_NODE_ID={ShellQuote(node.Id)}",
+        $"export ZRFRP_NODE_NAME={ShellQuote(node.Name)}",
+        $"export ZRFRP_PUBLIC_HOST={ShellQuote(node.PublicHost)}",
+        $"export ZRFRP_MASTER_URL={ShellQuote(node.EnrollmentMasterUrl.TrimEnd('/'))}",
+        $"export ZRFRP_MASTER_KEY={ShellQuote(peerKey)}",
+        $"export ZRFRP_PEER_KEY={ShellQuote(peerKey)}",
+        "curl --fail --silent --show-error --location \"${PREFIX}/installer\" | bash"
+    ]);
 }
 
 static string ShellQuote(string value) => "'" + value.Replace("'", "'\"'\"'") + "'";

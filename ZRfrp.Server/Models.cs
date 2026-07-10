@@ -78,6 +78,9 @@ public sealed class ManagedNode
     public int ActiveProxies { get; set; }
     public DateTimeOffset LastSeen { get; set; }
     public string Version { get; set; } = "";
+    public string EnrollmentTokenHash { get; set; } = "";
+    public DateTimeOffset EnrollmentExpiresAt { get; set; }
+    public string EnrollmentMasterUrl { get; set; } = "";
 }
 
 public sealed class ManagedClient
