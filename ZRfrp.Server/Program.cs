@@ -28,6 +28,7 @@ builder.Services.AddSingleton<FrpsManager>();
 builder.Services.AddSingleton<AllocationService>();
 builder.Services.AddSingleton<AccountService>();
 builder.Services.AddSingleton<AccountResolver>();
+builder.Services.AddSingleton<TrafficAccountingService>();
 builder.Services.AddSingleton<FrpsConfigService>();
 builder.Services.AddSingleton<UpdateService>();
 builder.Services.AddSingleton<BootstrapPackageService>();
@@ -518,7 +519,7 @@ app.MapDelete("/api/admin/accounts/{id}", async (string id, StateStore store) =>
     store.State.Clients.RemoveAll(item => item.AccountId == account.Id);
     store.State.Allocations.RemoveAll(item => item.AccountId == account.Id);
     foreach (var key in store.State.TrafficSnapshots.Keys
-                 .Where(key => key.Contains(account.Id + ".", StringComparison.Ordinal))
+                 .Where(key => TrafficAccountingService.BelongsToAccount(key, account.Id))
                  .ToArray())
     {
         store.State.TrafficSnapshots.Remove(key);
@@ -534,7 +535,7 @@ app.MapPost("/api/admin/accounts/{id}/reset-traffic", async (
     if (account is null) return Results.NotFound();
     account.TrafficUsedBytes = 0;
     foreach (var key in store.State.TrafficSnapshots.Keys
-                 .Where(key => key.Contains(account.Id + ".", StringComparison.Ordinal))
+                 .Where(key => TrafficAccountingService.BelongsToAccount(key, account.Id))
                  .ToArray())
     {
         store.State.TrafficSnapshots[key] = long.MaxValue;
@@ -887,6 +888,33 @@ app.MapPost("/api/peer/account/validate", (
         ? Results.Unauthorized()
         : Results.Ok(new PeerAccountValidationResponse(
             account.Id, account.Username, account.TrafficQuotaBytes, account.TrafficUsedBytes));
+});
+
+app.MapPost("/api/peer/traffic", async (
+    PeerTrafficReport report,
+    HttpContext context,
+    StateStore store,
+    TrafficAccountingService accounting,
+    ServerOptions serverOptions,
+    CancellationToken cancellationToken) =>
+{
+    if (!ValidatePeerKey(context, serverOptions.PeerKey))
+    {
+        return Results.Unauthorized();
+    }
+    if (string.IsNullOrWhiteSpace(report.NodeId)
+        || store.State.RevokedNodeIds.Contains(report.NodeId, StringComparer.Ordinal))
+    {
+        return Results.StatusCode(StatusCodes.Status410Gone);
+    }
+    if (!store.State.Nodes.Any(node => node.Id == report.NodeId))
+    {
+        return Results.NotFound(new { error = "节点尚未在主控注册。" });
+    }
+
+    var appliedBytes = await accounting.ApplyAsync(
+        report.NodeId, report.Samples ?? [], cancellationToken);
+    return Results.Ok(new { appliedBytes });
 });
 
 app.MapPost("/api/peer/allocate", async (

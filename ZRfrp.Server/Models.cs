@@ -174,6 +174,9 @@ public sealed record PeerAllocationRequest(AllocationRequest Allocation, string 
 public sealed record PeerAccountValidationRequest(string AccessToken);
 public sealed record PeerAccountValidationResponse(
     string Id, string Username, long TrafficQuotaBytes, long TrafficUsedBytes);
+public sealed record TrafficSample(
+    string AccountId, string ProxyType, string ProxyName, string ClientId, long TotalBytes);
+public sealed record PeerTrafficReport(string NodeId, IReadOnlyList<TrafficSample> Samples);
 public sealed record ConfigUpdateRequest(string Content, bool Restart);
 public sealed record FrpsInstallStatus(
     bool Installed,
