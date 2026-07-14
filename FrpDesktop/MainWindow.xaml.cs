@@ -855,7 +855,18 @@ public partial class MainWindow : Window
     private async Task<ClientAccountSession> LoginAndSyncNodesAsync(string platformUrl, string username, string password)
     {
         var normalizedPlatformUrl = ZRfrpControlClient.NormalizePlatformUrl(platformUrl);
-        var session = await _controlClient.LoginAsync(normalizedPlatformUrl, username, password, Environment.MachineName);
+        ClientAccountSession session;
+        try
+        {
+            session = await _controlClient.LoginAsync(
+                normalizedPlatformUrl, username, password, Environment.MachineName);
+        }
+        catch (System.Net.Http.HttpRequestException) when (!platformUrl.Contains("://", StringComparison.Ordinal))
+        {
+            normalizedPlatformUrl = "http://" + platformUrl.Trim().TrimEnd('/');
+            session = await _controlClient.LoginAsync(
+                normalizedPlatformUrl, username, password, Environment.MachineName);
+        }
         _state.PlatformUrl = normalizedPlatformUrl;
         _state.AccountUsername = session.Username;
         _state.AccountLoginSkipped = false;
@@ -1035,13 +1046,15 @@ public partial class MainWindow : Window
 
     private void ApplyNetworkProxySettings()
     {
-        _environmentService.ConfigureProxy(new NetworkProxyOptions(
+        var options = new NetworkProxyOptions(
             _state.NetworkProxyMode,
             _state.NetworkProxyType,
             _state.NetworkProxyHost,
             _state.NetworkProxyPort,
             _state.NetworkProxyUsername,
-            _state.NetworkProxyPassword));
+            _state.NetworkProxyPassword);
+        _environmentService.ConfigureProxy(options);
+        _controlClient.ConfigureProxy(options);
     }
 
     private void UpdateNetworkProxyControls()

@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 
@@ -7,16 +8,33 @@ namespace FrpDesktop;
 public sealed class ZRfrpControlClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private NetworkProxyOptions _proxyOptions = new("none", "HTTP", "", 0, "", "");
+    private bool _useSystemProxyFallback;
+
+    public void ConfigureProxy(NetworkProxyOptions options)
+    {
+        _proxyOptions = options;
+        _useSystemProxyFallback = false;
+    }
 
     public async Task<ClientAccountSession> LoginAsync(
         string platformUrl, string username, string password, string clientId,
         CancellationToken cancellationToken = default)
     {
         var baseAddress = CreatePlatformUri(platformUrl);
-        using var client = CreateHttpClient(baseAddress);
         var payload = JsonSerializer.Serialize(new { username, password, clientId }, JsonOptions);
-        using var response = await client.PostAsync(
-            "api/client/login", new StringContent(payload, Encoding.UTF8, "application/json"), cancellationToken);
+        HttpResponseMessage response;
+        try
+        {
+            response = await SendLoginAsync(baseAddress, payload, cancellationToken);
+        }
+        catch (HttpRequestException) when (_proxyOptions.Mode.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            _useSystemProxyFallback = true;
+            response = await SendLoginAsync(baseAddress, payload, cancellationToken);
+        }
+        using (response)
+        {
         var text = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -25,6 +43,7 @@ public sealed class ZRfrpControlClient
         }
         return JsonSerializer.Deserialize<ClientAccountSession>(text, JsonOptions)
             ?? throw new InvalidOperationException("控制平台返回了无效登录结果。");
+        }
     }
 
     public async Task<NodeExportDocument> ExportNodesAsync(
@@ -91,7 +110,7 @@ public sealed class ZRfrpControlClient
         response.EnsureSuccessStatusCode();
     }
 
-    private static HttpClient CreateClient(FrpProfile profile)
+    private HttpClient CreateClient(FrpProfile profile)
     {
         var baseAddress = CreatePlatformUri(profile.ControlApiUrl);
         if (string.IsNullOrWhiteSpace(profile.ControlApiKey)
@@ -112,12 +131,51 @@ public sealed class ZRfrpControlClient
         return client;
     }
 
-    private static HttpClient CreateHttpClient(Uri baseAddress) =>
-        new(new HttpClientHandler { UseProxy = false })
+    private async Task<HttpResponseMessage> SendLoginAsync(
+        Uri baseAddress, string payload, CancellationToken cancellationToken)
+    {
+        using var client = CreateHttpClient(baseAddress);
+        return await client.PostAsync(
+            "api/client/login", new StringContent(payload, Encoding.UTF8, "application/json"), cancellationToken);
+    }
+
+    private HttpClient CreateHttpClient(Uri baseAddress) =>
+        new(CreateHttpHandler())
         {
             BaseAddress = baseAddress,
             Timeout = TimeSpan.FromSeconds(10)
         };
+
+    private HttpClientHandler CreateHttpHandler()
+    {
+        var mode = _proxyOptions.Mode.Trim().ToLowerInvariant();
+        var handler = new HttpClientHandler { UseProxy = false };
+        if (mode == "system" || _useSystemProxyFallback)
+        {
+            handler.UseProxy = true;
+            handler.UseDefaultCredentials = true;
+        }
+        else if (mode == "manual"
+            && !string.IsNullOrWhiteSpace(_proxyOptions.Host)
+            && _proxyOptions.Port > 0)
+        {
+            var scheme = _proxyOptions.Type.Trim().ToLowerInvariant() switch
+            {
+                "https" => "https",
+                "socks4" => "socks4",
+                "socks5" => "socks5",
+                _ => "http"
+            };
+            handler.UseProxy = true;
+            handler.Proxy = new WebProxy($"{scheme}://{_proxyOptions.Host.Trim()}:{_proxyOptions.Port}");
+            if (!string.IsNullOrWhiteSpace(_proxyOptions.Username))
+            {
+                handler.Proxy.Credentials = new NetworkCredential(
+                    _proxyOptions.Username, _proxyOptions.Password);
+            }
+        }
+        return handler;
+    }
 
     public static string NormalizePlatformUrl(string platformUrl) =>
         CreatePlatformUri(platformUrl).ToString().TrimEnd('/');
