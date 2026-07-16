@@ -6,12 +6,11 @@ namespace ZRfrp.Server;
 
 public sealed class SmtpService
 {
-    private const int VerificationMinutes = 15;
     private readonly StateStore _store;
 
     public SmtpService(StateStore store) => _store = store;
 
-    public async Task SendVerificationCodeAsync(string email)
+    public async Task SendVerificationCodeAsync(string email, string recipientName)
     {
         var settings = _store.State.Smtp;
         EnsureConfigured(settings);
@@ -27,7 +26,8 @@ public sealed class SmtpService
         var code = System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
         var challenge = existing ?? new EmailVerificationChallenge { Email = normalizedEmail };
         challenge.CodeHash = Security.HashToken(code);
-        challenge.ExpiresAt = now.AddMinutes(VerificationMinutes);
+        var verificationMinutes = Math.Clamp(settings.VerificationMinutes, 1, 120);
+        challenge.ExpiresAt = now.AddMinutes(verificationMinutes);
         challenge.LastSentAt = now;
         challenge.FailedAttempts = 0;
         if (existing is null) _store.State.EmailVerificationChallenges.Add(challenge);
@@ -36,8 +36,8 @@ public sealed class SmtpService
         try
         {
             await SendAsync(normalizedEmail,
-                Render(settings.SubjectTemplate, normalizedEmail, code),
-                Render(settings.HtmlTemplate, normalizedEmail, code));
+                Render(settings.SubjectTemplate, normalizedEmail, recipientName, code, verificationMinutes),
+                Render(settings.HtmlTemplate, normalizedEmail, recipientName, code, verificationMinutes));
         }
         catch
         {
@@ -103,9 +103,12 @@ public sealed class SmtpService
             throw new InvalidOperationException("SMTP 配置不完整。");
     }
 
-    private static string Render(string template, string email, string code) => template
+    private static string Render(
+        string template, string email, string recipientName, string code, int verificationMinutes) => template
         .Replace("{{site_name}}", "ZRfrp", StringComparison.Ordinal)
         .Replace("{{recipient_email}}", HtmlEncoder.Default.Encode(email), StringComparison.Ordinal)
+        .Replace("{{recipient_name}}", HtmlEncoder.Default.Encode(
+            string.IsNullOrWhiteSpace(recipientName) ? email : recipientName.Trim()), StringComparison.Ordinal)
         .Replace("{{code}}", HtmlEncoder.Default.Encode(code), StringComparison.Ordinal)
-        .Replace("{{expires_minutes}}", VerificationMinutes.ToString(), StringComparison.Ordinal);
+        .Replace("{{expires_minutes}}", verificationMinutes.ToString(), StringComparison.Ordinal);
 }

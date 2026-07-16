@@ -232,8 +232,8 @@ app.MapPost("/api/auth/email-code", async (EmailCodeRequest request, StateStore 
         var email = SmtpService.NormalizeEmail(request.Email ?? "");
         if (store.State.Accounts.Any(item => item.Email.Equals(email, StringComparison.OrdinalIgnoreCase)))
             return Results.BadRequest(new { error = "该邮箱已注册。" });
-        await smtp.SendVerificationCodeAsync(email);
-        return Results.Ok(new { message = "验证码已发送，15 分钟内有效。" });
+        await smtp.SendVerificationCodeAsync(email, request.Username ?? "");
+        return Results.Ok(new { message = $"验证码已发送，{Math.Clamp(store.State.Smtp.VerificationMinutes, 1, 120)} 分钟内有效。" });
     }
     catch (Exception exception)
     {
@@ -461,6 +461,7 @@ app.MapPost("/api/client/login", async (
     var session = await accounts.CreateSessionAsync(account);
     return Results.Ok(new ClientLoginResponse(
         account.Id, account.Username, session.Token, session.ExpiresAt,
+        session.RefreshToken, session.RefreshExpiresAt,
         string.IsNullOrWhiteSpace(serverOptions.PublicHost) ? serverOptions.FrpsAddress : serverOptions.PublicHost,
         serverOptions.FrpsBindPort, serverOptions.FrpAuthToken,
         account.TrafficQuotaBytes, account.TrafficUsedBytes));
@@ -624,7 +625,7 @@ app.MapGet("/api/admin/smtp-settings", (StateStore store) =>
     {
         smtp.EmailVerificationEnabled, smtp.Host, smtp.Port, smtp.Username,
         hasPassword = !string.IsNullOrWhiteSpace(smtp.Password),
-        smtp.FromEmail, smtp.FromName, smtp.EnableSsl,
+        smtp.FromEmail, smtp.FromName, smtp.EnableSsl, smtp.VerificationMinutes,
         smtp.SubjectTemplate, smtp.HtmlTemplate
     });
 }).RequireAuthorization(policy => policy.RequireRole("admin"));
@@ -644,6 +645,7 @@ app.MapPut("/api/admin/smtp-settings", async (SmtpSettingsRequest request, State
         FromEmail = request.FromEmail?.Trim() ?? "",
         FromName = request.FromName?.Trim() ?? "ZRfrp",
         EnableSsl = request.EnableSsl,
+        VerificationMinutes = Math.Clamp(request.VerificationMinutes, 1, 120),
         SubjectTemplate = string.IsNullOrWhiteSpace(request.SubjectTemplate)
             ? "[{{site_name}}] 邮箱验证码" : request.SubjectTemplate,
         HtmlTemplate = string.IsNullOrWhiteSpace(request.HtmlTemplate)
@@ -1006,6 +1008,21 @@ app.MapPost("/api/peer/service/{action}", async (
     }
     var result = await frps.ServiceActionAsync(action);
     return result.ExitCode == 0 ? Results.Ok() : Results.BadRequest(new { error = result.Output });
+});
+
+app.MapPost("/api/client/refresh", async (
+    ClientRefreshRequest request, AccountService accounts, ServerOptions serverOptions) =>
+{
+    var session = await accounts.RefreshSessionAsync(request.RefreshToken ?? "");
+    if (session is null)
+        return Results.Json(new { error = "登录授权已失效，请重新登录。" }, statusCode: 401);
+    var value = session.Value;
+    return Results.Ok(new ClientLoginResponse(
+        value.Account.Id, value.Account.Username, value.Token, value.ExpiresAt,
+        value.RefreshToken, value.RefreshExpiresAt,
+        string.IsNullOrWhiteSpace(serverOptions.PublicHost) ? serverOptions.FrpsAddress : serverOptions.PublicHost,
+        serverOptions.FrpsBindPort, serverOptions.FrpAuthToken,
+        value.Account.TrafficQuotaBytes, value.Account.TrafficUsedBytes));
 });
 
 app.MapPost("/api/peer/account/validate", (
@@ -1650,6 +1667,13 @@ static string ExternalBaseUrl(HttpContext context, ServerOptions options)
 static async Task InitializeSecretsAsync(StateStore store, ILogger logger)
 {
     var changed = false;
+    const string legacyEmailTemplate = "<h2>{{site_name}} 邮箱验证码</h2><p>您的验证码是：</p><h1>{{code}}</h1><p>验证码将在 {{expires_minutes}} 分钟后失效。</p>";
+    if (string.IsNullOrWhiteSpace(store.State.Smtp.HtmlTemplate)
+        || store.State.Smtp.HtmlTemplate.Equals(legacyEmailTemplate, StringComparison.Ordinal))
+    {
+        store.State.Smtp.HtmlTemplate = new SmtpSettings().HtmlTemplate;
+        changed = true;
+    }
     if (string.IsNullOrWhiteSpace(store.State.AdminPasswordHash))
     {
         var password = Environment.GetEnvironmentVariable("ZRFRP_ADMIN_PASSWORD") ?? Security.CreateSecret(15);

@@ -62,6 +62,7 @@ public partial class MainWindow : Window
     private bool _trayDisposed;
     private bool _isLoadingAppSettings;
     private bool _isApplyingProxyToggle;
+    private bool _authorizationRefreshedThisRun;
     private DesktopUpdateInfo? _desktopUpdate;
     private Window? _floatingPanelWindow;
     private FrameworkElement? _floatingPanelContent;
@@ -500,6 +501,10 @@ public partial class MainWindow : Window
 
         try
         {
+            if (profile.ServerManaged)
+            {
+                await EnsureAuthorizationAsync(profile);
+            }
             if (string.IsNullOrWhiteSpace(profile.AccountAccessToken)
                 || profile.AccountTokenExpiresAt <= DateTimeOffset.UtcNow.AddMinutes(1))
             {
@@ -681,6 +686,8 @@ public partial class MainWindow : Window
                 profile.AccountId = session.AccountId;
                 profile.AccountAccessToken = session.AccessToken;
                 profile.AccountTokenExpiresAt = session.ExpiresAt;
+                profile.AccountRefreshToken = session.RefreshToken;
+                profile.AccountRefreshExpiresAt = session.RefreshExpiresAt;
             }
             matchedProfileIds.Add(profile.Id);
         }
@@ -792,6 +799,8 @@ public partial class MainWindow : Window
             profile.AccountId = "";
             profile.AccountAccessToken = "";
             profile.AccountTokenExpiresAt = default;
+            profile.AccountRefreshToken = "";
+            profile.AccountRefreshExpiresAt = default;
         }
 
         _state.PlatformUrl = "";
@@ -882,6 +891,8 @@ public partial class MainWindow : Window
             profile.AccountId = session.AccountId;
             profile.AccountAccessToken = session.AccessToken;
             profile.AccountTokenExpiresAt = session.ExpiresAt;
+            profile.AccountRefreshToken = session.RefreshToken;
+            profile.AccountRefreshExpiresAt = session.RefreshExpiresAt;
             // Keep using the address the user successfully logged in through even
             // when a reverse proxy does not forward its public Host header.
             profile.ControlApiUrl = normalizedPlatformUrl;
@@ -901,8 +912,12 @@ public partial class MainWindow : Window
     {
         var source = _state.Profiles.FirstOrDefault(profile =>
             profile.ServerManaged
-            && !string.IsNullOrWhiteSpace(profile.AccountAccessToken)
-            && profile.AccountTokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(1));
+            && !string.IsNullOrWhiteSpace(profile.AccountRefreshToken)
+            && profile.AccountRefreshExpiresAt > DateTimeOffset.UtcNow)
+            ?? _state.Profiles.FirstOrDefault(profile =>
+                profile.ServerManaged
+                && !string.IsNullOrWhiteSpace(profile.AccountAccessToken)
+                && profile.AccountTokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(1));
         var platformUrl = string.IsNullOrWhiteSpace(_state.PlatformUrl)
             ? source?.ControlApiUrl ?? ""
             : _state.PlatformUrl;
@@ -913,12 +928,22 @@ public partial class MainWindow : Window
 
         try
         {
+            if (!string.IsNullOrWhiteSpace(source.AccountRefreshToken))
+            {
+                var refreshed = await _controlClient.RefreshAsync(
+                    platformUrl, source.AccountRefreshToken, Environment.MachineName);
+                ApplyAccountSession(refreshed, platformUrl);
+                source = _state.Profiles.First(profile => profile.Id == source.Id);
+                _authorizationRefreshedThisRun = true;
+            }
             var document = await _controlClient.ExportNodesAsync(platformUrl, source.AccountAccessToken);
             var session = new ClientAccountSession(
                 source.AccountId,
                 _state.AccountUsername,
                 source.AccountAccessToken,
                 source.AccountTokenExpiresAt,
+                source.AccountRefreshToken,
+                source.AccountRefreshExpiresAt,
                 "",
                 0,
                 "",
@@ -931,6 +956,39 @@ public partial class MainWindow : Window
         catch (Exception exception)
         {
             AppendLog($"节点自动同步失败：{exception.Message}");
+        }
+    }
+
+    private async Task EnsureAuthorizationAsync(FrpProfile profile)
+    {
+        if (_authorizationRefreshedThisRun
+            && profile.AccountTokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(5)) return;
+        if (string.IsNullOrWhiteSpace(profile.AccountRefreshToken)
+            || profile.AccountRefreshExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            if (profile.AccountTokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(1)) return;
+            throw new InvalidOperationException("登录授权已失效，请重新登录一次以启用自动续期。");
+        }
+        var platformUrl = string.IsNullOrWhiteSpace(_state.PlatformUrl)
+            ? profile.ControlApiUrl : _state.PlatformUrl;
+        var refreshed = await _controlClient.RefreshAsync(
+            platformUrl, profile.AccountRefreshToken, Environment.MachineName);
+        ApplyAccountSession(refreshed, platformUrl);
+        _authorizationRefreshedThisRun = true;
+        SaveState();
+        AppendLog("控制平台登录授权已自动续期。");
+    }
+
+    private void ApplyAccountSession(ClientAccountSession session, string platformUrl)
+    {
+        foreach (var profile in _state.Profiles.Where(item => item.ServerManaged))
+        {
+            profile.AccountId = session.AccountId;
+            profile.AccountAccessToken = session.AccessToken;
+            profile.AccountTokenExpiresAt = session.ExpiresAt;
+            profile.AccountRefreshToken = session.RefreshToken;
+            profile.AccountRefreshExpiresAt = session.RefreshExpiresAt;
+            profile.ControlApiUrl = platformUrl;
         }
     }
 

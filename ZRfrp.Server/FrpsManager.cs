@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace ZRfrp.Server;
 
@@ -15,7 +16,37 @@ public sealed class FrpsManager
     public FrpsManager(ServerOptions options)
     {
         _options = options;
+        ApplyDashboardConfigFromFile(options);
         _http = CreateDashboardClient(options);
+    }
+
+    private static void ApplyDashboardConfigFromFile(ServerOptions options)
+    {
+        try
+        {
+            if (!File.Exists(options.FrpsConfigPath)) return;
+            var text = File.ReadAllText(options.FrpsConfigPath);
+            var address = ReadTomlString(text, "webServer.addr", "127.0.0.1");
+            var port = ReadTomlInt(text, "webServer.port", 7500);
+            options.FrpsDashboardUrl = $"http://{address}:{port}";
+            options.FrpsDashboardUser = ReadTomlString(text, "webServer.user", "");
+            options.FrpsDashboardPassword = ReadTomlString(text, "webServer.password", "");
+        }
+        catch { }
+    }
+
+    private static string ReadTomlString(string text, string key, string fallback)
+    {
+        var pattern = "(?m)^\\s*" + Regex.Escape(key)
+            + "\\s*=\\s*\"(?<value>(?:\\\\.|[^\"])*)\"";
+        var match = Regex.Match(text, pattern);
+        return match.Success ? match.Groups["value"].Value.Replace("\\\"", "\"") : fallback;
+    }
+
+    private static int ReadTomlInt(string text, string key, int fallback)
+    {
+        var match = Regex.Match(text, $@"(?m)^\s*{Regex.Escape(key)}\s*=\s*(?<value>\d+)");
+        return match.Success && int.TryParse(match.Groups["value"].Value, out var value) ? value : fallback;
     }
 
     public void ApplyConfig(FrpsConfigModel model)

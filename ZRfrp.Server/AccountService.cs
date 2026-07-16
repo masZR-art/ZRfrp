@@ -17,7 +17,7 @@ public sealed class AccountService
             && account.Username.Equals(username.Trim(), StringComparison.OrdinalIgnoreCase)
             && Security.Verify(password, account.PasswordHash));
 
-    public async Task<(UserAccount Account, string Token, DateTimeOffset ExpiresAt)> CreateSessionAsync(
+    public async Task<(UserAccount Account, string Token, DateTimeOffset ExpiresAt, string RefreshToken, DateTimeOffset RefreshExpiresAt)> CreateSessionAsync(
         UserAccount account)
     {
         var token = Security.CreateSecret(32);
@@ -25,15 +25,39 @@ public sealed class AccountService
             ? _store.State.SessionHours
             : _options.SessionHours;
         var expiresAt = DateTimeOffset.UtcNow.AddHours(Math.Clamp(configuredHours, 1, 8760));
-        _store.State.AccountSessions.RemoveAll(session => session.ExpiresAt <= DateTimeOffset.UtcNow);
+        var refreshToken = Security.CreateSecret(48);
+        var refreshExpiresAt = DateTimeOffset.UtcNow.AddDays(30);
+        _store.State.AccountSessions.RemoveAll(session => session.RefreshExpiresAt <= DateTimeOffset.UtcNow);
         _store.State.AccountSessions.Add(new AccountSession
         {
             AccountId = account.Id,
             TokenHash = Security.HashToken(token),
-            ExpiresAt = expiresAt
+            ExpiresAt = expiresAt,
+            RefreshTokenHash = Security.HashToken(refreshToken),
+            RefreshExpiresAt = refreshExpiresAt
         });
         await _store.SaveAsync();
-        return (account, token, expiresAt);
+        return (account, token, expiresAt, refreshToken, refreshExpiresAt);
+    }
+
+    public async Task<(UserAccount Account, string Token, DateTimeOffset ExpiresAt, string RefreshToken, DateTimeOffset RefreshExpiresAt)?> RefreshSessionAsync(string refreshToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var session = _store.State.AccountSessions.FirstOrDefault(item =>
+            item.RefreshExpiresAt > now && !string.IsNullOrWhiteSpace(item.RefreshTokenHash)
+            && Security.VerifyToken(refreshToken, item.RefreshTokenHash));
+        if (session is null) return null;
+        var account = Find(session.AccountId);
+        if (account is null || !account.Enabled) return null;
+        var configuredHours = _store.State.SessionHours > 0 ? _store.State.SessionHours : _options.SessionHours;
+        var accessToken = Security.CreateSecret(32);
+        var nextRefreshToken = Security.CreateSecret(48);
+        session.TokenHash = Security.HashToken(accessToken);
+        session.ExpiresAt = now.AddHours(Math.Clamp(configuredHours, 1, 8760));
+        session.RefreshTokenHash = Security.HashToken(nextRefreshToken);
+        session.RefreshExpiresAt = now.AddDays(30);
+        await _store.SaveAsync();
+        return (account, accessToken, session.ExpiresAt, nextRefreshToken, session.RefreshExpiresAt);
     }
 
     public UserAccount? ValidateAccessToken(string token)

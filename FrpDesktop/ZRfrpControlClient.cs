@@ -64,6 +64,25 @@ public sealed class ZRfrpControlClient
             ?? throw new InvalidOperationException("控制平台返回了无效节点配置。");
     }
 
+    public async Task<ClientAccountSession> RefreshAsync(
+        string platformUrl, string refreshToken, string clientId,
+        CancellationToken cancellationToken = default)
+    {
+        var baseAddress = CreatePlatformUri(platformUrl);
+        using var client = CreateHttpClient(baseAddress);
+        var payload = JsonSerializer.Serialize(new { refreshToken, clientId }, JsonOptions);
+        using var response = await client.PostAsync(
+            "api/client/refresh", new StringContent(payload, Encoding.UTF8, "application/json"), cancellationToken);
+        var text = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = JsonSerializer.Deserialize<ControlError>(text, JsonOptions);
+            throw new InvalidOperationException(error?.Error ?? "登录授权续期失败。");
+        }
+        return JsonSerializer.Deserialize<ClientAccountSession>(text, JsonOptions)
+            ?? throw new InvalidOperationException("控制平台返回了无效续期结果。");
+    }
+
     public async Task<ManagedAllocation> AllocateAsync(
         FrpProfile profile, FrpProxy proxy, CancellationToken cancellationToken = default)
     {
@@ -216,6 +235,8 @@ public sealed record ClientAccountSession(
     string Username,
     string AccessToken,
     DateTimeOffset ExpiresAt,
+    string RefreshToken,
+    DateTimeOffset RefreshExpiresAt,
     string ServerAddress,
     int ServerPort,
     string FrpToken,

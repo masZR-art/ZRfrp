@@ -74,8 +74,18 @@ public sealed class SmtpSettings
     public string FromEmail { get; set; } = "";
     public string FromName { get; set; } = "ZRfrp";
     public bool EnableSsl { get; set; } = true;
+    public int VerificationMinutes { get; set; } = 15;
     public string SubjectTemplate { get; set; } = "[{{site_name}}] 邮箱验证码";
-    public string HtmlTemplate { get; set; } = "<h2>{{site_name}} 邮箱验证码</h2><p>您的验证码是：</p><h1>{{code}}</h1><p>验证码将在 {{expires_minutes}} 分钟后失效。</p>";
+    public string HtmlTemplate { get; set; } = """
+<!doctype html><html><body style="margin:0;padding:24px;background:#f3f4f6;font-family:Arial,'Microsoft YaHei',sans-serif;color:#111827">
+<div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 8px 30px rgba(15,23,42,.10)">
+<div style="padding:28px 40px;background:#4f46e5;color:#ffffff"><h1 style="margin:0;font-size:26px">邮箱验证码</h1></div>
+<div style="padding:42px 40px;font-size:16px;line-height:1.8"><p>{{recipient_name}}，您好：</p><p>您的验证码是：</p>
+<div style="margin:30px 0;text-align:center;font-size:38px;font-weight:700;letter-spacing:10px;color:#111827">{{code}}</div>
+<p>验证码将在 <strong>{{expires_minutes}} 分钟</strong>后失效。</p><p>如果不是您本人操作，请忽略此邮件。</p></div>
+<div style="padding:20px 40px;background:#fafafa;color:#94a3b8;font-size:13px">此邮件由 {{site_name}} 自动发送，请勿直接回复。</div>
+</div></body></html>
+""";
 }
 
 public sealed class EmailVerificationChallenge
@@ -93,6 +103,8 @@ public sealed class AccountSession
     public string AccountId { get; set; } = "";
     public string TokenHash { get; set; } = "";
     public DateTimeOffset ExpiresAt { get; set; }
+    public string RefreshTokenHash { get; set; } = "";
+    public DateTimeOffset RefreshExpiresAt { get; set; }
 }
 
 public sealed class ManagedNode
@@ -149,10 +161,11 @@ public sealed class PortAllocation
 public sealed record AuditEntry(DateTimeOffset Time, string Action, string Detail);
 public sealed record LoginRequest(string Username, string Password);
 public sealed record RegistrationRequest(string Username, string Password, string Email, string VerificationCode);
-public sealed record EmailCodeRequest(string Email);
+public sealed record EmailCodeRequest(string Email, string Username);
 public sealed record SmtpSettingsRequest(
     bool EmailVerificationEnabled, string Host, int Port, string Username, string Password,
-    string FromEmail, string FromName, bool EnableSsl, string SubjectTemplate, string HtmlTemplate);
+    string FromEmail, string FromName, bool EnableSsl, int VerificationMinutes,
+    string SubjectTemplate, string HtmlTemplate);
 public sealed record TestEmailRequest(string RecipientEmail);
 public sealed record PasswordChangeRequest(string CurrentPassword, string NewPassword);
 public sealed record AccountRequest(string Username, string Password, string Role, long TrafficQuotaBytes, bool Enabled);
@@ -172,7 +185,9 @@ public sealed record NodeEnrollmentResponse(
 public sealed record ClientLoginRequest(string Username, string Password, string ClientId);
 public sealed record ClientLoginResponse(
     string AccountId, string Username, string AccessToken, DateTimeOffset ExpiresAt,
+    string RefreshToken, DateTimeOffset RefreshExpiresAt,
     string ServerAddress, int ServerPort, string FrpToken, long TrafficQuotaBytes, long TrafficUsedBytes);
+public sealed record ClientRefreshRequest(string RefreshToken, string ClientId);
 public sealed record NodeUpdateRequest(string Name, string? FlagCode, string? PublicHost);
 public sealed record NodeExportDocument(
     string Kind,
