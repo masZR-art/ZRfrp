@@ -494,6 +494,27 @@ app.MapGet("/api/customer/me", (ClaimsPrincipal principal, AccountService accoun
     });
 }).RequireAuthorization();
 
+app.MapGet("/api/traffic/statistics", async (
+    string? range,
+    ClaimsPrincipal principal,
+    TrafficAccountingService accounting,
+    CancellationToken cancellationToken) =>
+{
+    var role = principal.FindFirstValue(ClaimTypes.Role);
+    var accountId = role == "customer"
+        ? principal.FindFirstValue(ClaimTypes.NameIdentifier)
+        : null;
+    if (role is not ("admin" or "customer")
+        || (role == "customer" && string.IsNullOrWhiteSpace(accountId)))
+    {
+        return Results.Unauthorized();
+    }
+
+    var statistics = await accounting.GetStatisticsAsync(
+        range ?? "24h", accountId, cancellationToken);
+    return Results.Ok(statistics);
+}).RequireAuthorization();
+
 app.MapGet("/api/admin/accounts", (StateStore store) =>
     Results.Ok(store.State.Accounts.Select(account => new
     {
@@ -553,7 +574,11 @@ app.MapPut("/api/admin/accounts/{id}", async (
     return Results.Ok();
 }).RequireAuthorization(policy => policy.RequireRole("admin"));
 
-app.MapDelete("/api/admin/accounts/{id}", async (string id, StateStore store) =>
+app.MapDelete("/api/admin/accounts/{id}", async (
+    string id,
+    StateStore store,
+    TrafficAccountingService accounting,
+    CancellationToken cancellationToken) =>
 {
     var account = store.State.Accounts.FirstOrDefault(item => item.Id == id);
     if (account is null)
@@ -565,34 +590,24 @@ app.MapDelete("/api/admin/accounts/{id}", async (string id, StateStore store) =>
         return Results.BadRequest(new { error = "管理员账号不能在客户账号列表中删除。" });
     }
 
+    await accounting.RemoveAccountDataAsync(account.Id, cancellationToken);
     store.State.Accounts.Remove(account);
     store.State.AccountSessions.RemoveAll(item => item.AccountId == account.Id);
     store.State.Clients.RemoveAll(item => item.AccountId == account.Id);
     store.State.Allocations.RemoveAll(item => item.AccountId == account.Id);
-    foreach (var key in store.State.TrafficSnapshots.Keys
-                 .Where(key => TrafficAccountingService.BelongsToAccount(key, account.Id))
-                 .ToArray())
-    {
-        store.State.TrafficSnapshots.Remove(key);
-        store.State.TrafficInSnapshots.Remove(key);
-        store.State.TrafficOutSnapshots.Remove(key);
-    }
     await store.AuditAsync("account", $"删除客户账号 {account.Username}");
     return Results.Ok(new { message = $"客户账号 {account.Username} 已删除。" });
 }).RequireAuthorization(policy => policy.RequireRole("admin"));
 
 app.MapPost("/api/admin/accounts/{id}/reset-traffic", async (
-    string id, StateStore store) =>
+    string id,
+    StateStore store,
+    TrafficAccountingService accounting,
+    CancellationToken cancellationToken) =>
 {
     var account = store.State.Accounts.FirstOrDefault(item => item.Id == id);
     if (account is null) return Results.NotFound();
-    account.TrafficUsedBytes = 0;
-    foreach (var key in store.State.TrafficSnapshots.Keys
-                 .Where(key => TrafficAccountingService.BelongsToAccount(key, account.Id))
-                 .ToArray())
-    {
-        store.State.TrafficSnapshots[key] = long.MaxValue;
-    }
+    await accounting.ResetAccountAsync(account.Id, cancellationToken);
     await store.AuditAsync("account", $"重置账号 {account.Username} 的流量");
     return Results.Ok();
 }).RequireAuthorization(policy => policy.RequireRole("admin"));
@@ -673,12 +688,17 @@ app.MapGet("/api/admin/traffic-status", (TrafficCollector collector, FrpsManager
 {
     var healthy = collector.LastSuccessAt is not null && string.IsNullOrWhiteSpace(collector.LastError);
     var message = healthy
-        ? $"最近成功：{collector.LastSuccessAt:yyyy-MM-dd HH:mm:ss} UTC；Dashboard 通道 {collector.LastDashboardProxyCount}，匹配账号样本 {collector.LastMatchedSampleCount}，本轮新增 {collector.LastAppliedBytes} B。"
+        ? $"最近成功：{collector.LastSuccessAt:yyyy-MM-dd HH:mm:ss} UTC；Dashboard 通道 {collector.LastDashboardProxyCount}，匹配账号样本 {collector.LastMatchedSampleCount}，未匹配 {collector.LastUnmatchedProxyCount}，本轮新增 {collector.LastAppliedBytes} B。"
         : $"采集异常：{collector.LastError} {frps.LastDashboardError}".Trim();
+    if (healthy && collector.LastUnmatchedProxyCount > 0)
+    {
+        message += $" 未匹配摘要：{collector.LastUnmatchedSummary}";
+    }
     return Results.Ok(new
     {
         healthy, message, collector.LastAttemptAt, collector.LastSuccessAt,
         collector.LastDashboardProxyCount, collector.LastMatchedSampleCount,
+        collector.LastUnmatchedProxyCount, collector.LastUnmatchedSummary,
         collector.LastAppliedBytes, collector.LastError, frps.LastDashboardError
     });
 }).RequireAuthorization(policy => policy.RequireRole("admin"));

@@ -54,7 +54,7 @@
       </nav>
       <div class="aside-foot">
         <span id="node-health" class="health"><i></i>检测中</span>
-        <button id="version-button" class="quiet">v2.1.20</button>
+        <button id="version-button" class="quiet">v2.2.7</button>
         <button id="logout" class="quiet">退出登录</button>
       </div>
     </aside>
@@ -75,6 +75,44 @@
           <article><span>总入站流量</span><strong id="metric-in">0 B</strong><small>frps 累计统计</small></article>
           <article><span>总出站流量</span><strong id="metric-out">0 B</strong><small>frps 累计统计</small></article>
         </div>
+        <section class="traffic-dashboard" data-traffic-dashboard="admin">
+          <div class="traffic-section-head">
+            <div><h2>流量分析</h2><p>按时间、节点、账号、协议和隧道查看实际传输</p></div>
+            <div class="segmented traffic-range" aria-label="统计时间范围">
+              <button type="button" data-range="24h" class="active">24 小时</button>
+              <button type="button" data-range="7d">7 天</button>
+              <button type="button" data-range="30d">30 天</button>
+            </div>
+          </div>
+          <div class="traffic-period-summary">
+            <span>区间总量<strong data-stat="period-total">0 B</strong></span>
+            <span>入站<strong data-stat="period-in">0 B</strong></span>
+            <span>出站<strong data-stat="period-out">0 B</strong></span>
+            <small data-stat="status">正在读取统计数据</small>
+          </div>
+          <div class="traffic-grid">
+            <section class="panel chart-panel chart-wide">
+              <div class="chart-title"><div><h3>流量趋势</h3><p>区间入站与出站增量</p></div><div class="chart-keys"><span class="key-in">入站</span><span class="key-out">出站</span></div></div>
+              <div class="chart-canvas-wrap"><canvas data-chart="trend" aria-label="流量趋势图"></canvas><div class="chart-tooltip hidden"></div><div class="chart-empty hidden">当前区间尚无流量</div></div>
+            </section>
+            <section class="panel chart-panel">
+              <div class="chart-title"><div><h3>节点分布</h3><p>各服务节点流量占比</p></div></div>
+              <div class="donut-layout"><div class="donut-wrap"><canvas data-chart="nodes" aria-label="节点流量分布图"></canvas><div class="donut-total"><span>合计</span><strong>0 B</strong></div></div><div class="chart-legend" data-legend="nodes"></div></div>
+            </section>
+            <section class="panel chart-panel">
+              <div class="chart-title"><div><h3>协议分布</h3><p>TCP / UDP / HTTP(S)</p></div></div>
+              <div class="donut-layout"><div class="donut-wrap"><canvas data-chart="protocols" aria-label="协议流量分布图"></canvas><div class="donut-total"><span>合计</span><strong>0 B</strong></div></div><div class="chart-legend" data-legend="protocols"></div></div>
+            </section>
+            <section class="panel chart-panel">
+              <div class="chart-title"><div><h3>账号用量排行</h3><p>所选区间内的客户流量</p></div></div>
+              <div class="ranking-list" data-ranking="accounts"></div>
+            </section>
+            <section class="panel chart-panel">
+              <div class="chart-title"><div><h3>活跃隧道</h3><p>流量最高的隧道与节点</p></div></div>
+              <div class="ranking-list" data-ranking="tunnels"></div>
+            </section>
+          </div>
+        </section>
         <div class="content-grid">
           <section class="panel">
             <div class="panel-head"><div><h2>服务状态</h2><p>本机 frps 进程与控制端口</p></div>
@@ -212,6 +250,40 @@
           <article><span>流量额度</span><strong id="customer-quota">不限</strong><small>由管理员分配</small></article>
           <article><span>剩余流量</span><strong id="customer-remaining">不限</strong><small>额度用尽后停止连接</small></article>
         </div>
+        <section class="traffic-dashboard customer-traffic" data-traffic-dashboard="customer">
+          <div class="traffic-section-head">
+            <div><h2>我的流量</h2><p>仅显示当前账号产生的传输数据</p></div>
+            <div class="segmented traffic-range" aria-label="统计时间范围">
+              <button type="button" data-range="24h" class="active">24 小时</button>
+              <button type="button" data-range="7d">7 天</button>
+              <button type="button" data-range="30d">30 天</button>
+            </div>
+          </div>
+          <div class="traffic-period-summary">
+            <span>区间总量<strong data-stat="period-total">0 B</strong></span>
+            <span>入站<strong data-stat="period-in">0 B</strong></span>
+            <span>出站<strong data-stat="period-out">0 B</strong></span>
+            <small data-stat="status">正在读取统计数据</small>
+          </div>
+          <div class="traffic-grid customer-chart-grid">
+            <section class="panel chart-panel chart-wide">
+              <div class="chart-title"><div><h3>流量趋势</h3><p>区间入站与出站增量</p></div><div class="chart-keys"><span class="key-in">入站</span><span class="key-out">出站</span></div></div>
+              <div class="chart-canvas-wrap"><canvas data-chart="trend" aria-label="我的流量趋势图"></canvas><div class="chart-tooltip hidden"></div><div class="chart-empty hidden">当前区间尚无流量</div></div>
+            </section>
+            <section class="panel chart-panel">
+              <div class="chart-title"><div><h3>节点分布</h3><p>流量经过的服务节点</p></div></div>
+              <div class="donut-layout"><div class="donut-wrap"><canvas data-chart="nodes" aria-label="我的节点流量分布图"></canvas><div class="donut-total"><span>合计</span><strong>0 B</strong></div></div><div class="chart-legend" data-legend="nodes"></div></div>
+            </section>
+            <section class="panel chart-panel">
+              <div class="chart-title"><div><h3>协议分布</h3><p>不同隧道协议的流量</p></div></div>
+              <div class="donut-layout"><div class="donut-wrap"><canvas data-chart="protocols" aria-label="我的协议流量分布图"></canvas><div class="donut-total"><span>合计</span><strong>0 B</strong></div></div><div class="chart-legend" data-legend="protocols"></div></div>
+            </section>
+            <section class="panel chart-panel customer-ranking">
+              <div class="chart-title"><div><h3>活跃隧道</h3><p>当前账号流量最高的隧道</p></div></div>
+              <div class="ranking-list" data-ranking="tunnels"></div>
+            </section>
+          </div>
+        </section>
         <section class="panel compact"><div class="panel-head"><div><h2>账号信息</h2><p>当前登录的 ZRfrp 客户账号</p></div>
           <div class="service-actions"><button id="copy-node-export">复制节点配置</button><button id="download-node-export" class="primary">下载节点配置</button></div>
         </div><div id="customer-info" class="details"></div><p id="customer-export-status" class="notice"></p></section>
@@ -272,6 +344,7 @@
     </section>
   </div>
   <div id="toast"></div>
+  <script src="/traffic-charts.js"></script>
   <script src="/app.js"></script>
   <script src="/nodes-ui.js"></script>
 </body>

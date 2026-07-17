@@ -1,6 +1,7 @@
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 let snapshot=null, session=null, advanced=false;
 let registrationSettings={emailVerificationEnabled:false};
+const trafficRequestIds={admin:0,customer:0};
 const titles={
   overview:["主控总览","连接、流量和服务状态"],nodes:["服务节点","安装、监控和控制 frps 节点"],
   accounts:["客户账号","账号状态与流量额度"],clients:["客户端","在线设备与连接信息"],
@@ -44,7 +45,7 @@ function getNodeNameInputValue(input){return(nodeFlagEmoji[input.dataset.flag]||
 async function refresh(){
   if(!session?.authenticated)return;
   if(session.role==="customer"){await loadCustomer();return}
-  try{snapshot=await api("/api/overview");renderOverview(snapshot);$("#updated").textContent=new Date().toLocaleTimeString()+" 更新"}catch(error){toast(error.message)}
+  try{snapshot=await api("/api/overview");renderOverview(snapshot);$("#updated").textContent=new Date().toLocaleTimeString()+" 更新";await loadTrafficDashboard("admin")}catch(error){toast(error.message)}
 }
 function renderOverview(data){
   $("#node-health").className=`health ${data.reachable?"online":"offline"}`;$("#node-health").innerHTML=`<i></i>${data.reachable?"节点在线":"节点离线"}`;
@@ -62,7 +63,17 @@ async function loadAccounts(){try{const rows=await api("/api/admin/accounts");$(
 async function saveQuota(button){const input=$(`.quota-edit[data-id="${button.dataset.id}"]`);try{await api(`/api/admin/accounts/${button.dataset.id}`,{method:"PUT",body:JSON.stringify({username:"",password:"",role:"customer",trafficQuotaBytes:Number(input.value||0)*1024**3,enabled:input.dataset.enabled==="true"})});toast("流量额度已更新");loadAccounts()}catch(e){toast(e.message)}}
 async function toggleAccount(button){try{await api(`/api/admin/accounts/${button.dataset.id}`,{method:"PUT",body:JSON.stringify({username:"",password:"",role:"customer",trafficQuotaBytes:Number(button.dataset.quota),enabled:button.dataset.enabled!=="true"})});loadAccounts()}catch(e){toast(e.message)}}
 async function deleteAccount(button){const accepted=await askConfirmation("删除客户账号",`确定删除“${button.dataset.username}”吗？该账号的登录会话、客户端授权和端口租约将同时失效。`);if(!accepted)return;try{const result=await api(`/api/admin/accounts/${button.dataset.id}`,{method:"DELETE"});toast(result.message);loadAccounts()}catch(e){toast(e.message)}}
-async function loadCustomer(){try{const me=await api("/api/customer/me");$("#customer-used").textContent=fmtBytes(me.trafficUsedBytes);$("#customer-quota").textContent=me.trafficQuotaBytes?fmtBytes(me.trafficQuotaBytes):"不限";$("#customer-remaining").textContent=fmtBytes(me.remainingBytes);$("#customer-info").innerHTML=`<div class="detail"><span>账号</span><strong>${escapeHtml(me.username)}</strong></div><div class="detail"><span>账号 ID</span><strong>${escapeHtml(me.id)}</strong></div>`;$("#node-health").className="health online";$("#node-health").innerHTML="<i></i>账号正常"}catch(e){toast(e.message)}}
+async function loadCustomer(){try{const me=await api("/api/customer/me");$("#customer-used").textContent=fmtBytes(me.trafficUsedBytes);$("#customer-quota").textContent=me.trafficQuotaBytes?fmtBytes(me.trafficQuotaBytes):"不限";$("#customer-remaining").textContent=fmtBytes(me.remainingBytes);$("#customer-info").innerHTML=`<div class="detail"><span>账号</span><strong>${escapeHtml(me.username)}</strong></div><div class="detail"><span>账号 ID</span><strong>${escapeHtml(me.id)}</strong></div>`;$("#node-health").className="health online";$("#node-health").innerHTML="<i></i>账号正常";await loadTrafficDashboard("customer")}catch(e){toast(e.message)}}
+
+async function loadTrafficDashboard(scope){
+  const root=document.querySelector(`[data-traffic-dashboard="${scope}"]`);if(!root)return;
+  const requestId=++trafficRequestIds[scope],range=root.dataset.range||"24h",status=root.querySelector('[data-stat="status"]');
+  try{const data=await api(`/api/traffic/statistics?range=${encodeURIComponent(range)}`);if(requestId!==trafficRequestIds[scope])return;window.ZRfrpTrafficCharts?.render(root,data)}catch(error){if(requestId!==trafficRequestIds[scope])return;status.textContent=error.message}
+}
+
+function decorateResponsiveTables(root=document){
+  root.querySelectorAll("table").forEach(table=>{const labels=[...table.querySelectorAll("thead th")].map(cell=>cell.textContent.trim());table.querySelectorAll("tbody tr").forEach(row=>[...row.children].forEach((cell,index)=>{if(cell.classList.contains("empty"))return;cell.dataset.label=labels[index]||"操作"}))});
+}
 async function exportNodes(download){const status=$("#customer-export-status");try{status.textContent="正在生成节点配置...";const doc=await api("/api/customer/nodes/export");const text=JSON.stringify(doc,null,2);if(download){const blob=new Blob([text],{type:"application/json"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="zrfrp-nodes.json";a.click();URL.revokeObjectURL(url);status.textContent="节点配置已下载。";toast("节点配置已下载")}else{await copyText(text);status.textContent="节点配置已复制到剪贴板。";toast("节点配置已复制")}}catch(e){status.textContent=e.message;toast(e.message)}}
 async function loadNodes(){try{const status=await api("/api/frps/install-status"),nodes=await api("/api/admin/nodes");$("#install-status").textContent=status.message||(status.installed?"本机 frps 已安装，可由主控面板管理。":"本机尚未安装 frps，可点击右上角自动修复。");const d=snapshot||await api("/api/overview"),localHost=d.publicHost||"未配置",localName=d.localNodeName||"本机节点";const local=`<tr><td><input class="node-name-edit" data-id="local" value="${escapeHtml(localName)}"><small>local</small></td><td>${escapeHtml(localHost)}:${d.bindPort||7000}</td><td><span class="tag ${d.reachable?"":"off"}">${d.reachable?"在线":"离线"}</span></td><td>${$("#metric-clients").textContent}</td><td>${$("#metric-proxies").textContent}</td><td>刚刚</td><td><button class="node-save" data-id="local">保存名称</button> ${status.optWritable?"本机":"需修复"}</td></tr>`;$("#nodes-body").innerHTML=local+nodes.map(n=>`<tr><td><input class="node-name-edit" data-id="${n.id}" value="${escapeHtml(n.name)}"><small>${escapeHtml(n.version)}</small></td><td>${escapeHtml(n.publicHost)}:${n.frpsPort}</td><td><span class="tag ${n.online?"":"off"}">${n.online?"在线":"离线"}</span></td><td>${n.activeClients}</td><td>${n.activeProxies}</td><td>${new Date(n.lastSeen).toLocaleString()}</td><td><button class="node-save" data-id="${n.id}">保存名称</button> <button class="node-restart" data-id="${n.id}">重启</button></td></tr>`).join("");$$(".node-save").forEach(b=>b.onclick=async()=>{try{const input=$(`.node-name-edit[data-id="${b.dataset.id}"]`);await api(`/api/admin/nodes/${b.dataset.id}`,{method:"PUT",body:JSON.stringify({name:input.value})});toast("节点名称已保存");snapshot=null;loadNodes()}catch(e){toast(e.message)}});$$(".node-restart").forEach(b=>b.onclick=async()=>{try{const r=await api(`/api/admin/nodes/${b.dataset.id}/service/restart`,{method:"POST"});toast(r.message)}catch(e){toast(e.message)}})}catch(e){toast(e.message)}}
 async function loadConfigModel(){advanced=false;$("#config-form").classList.remove("hidden");$("#config-editor").classList.add("hidden");$("#advanced-config").textContent="高级文本编辑";try{const m=await api("/api/config/model");const map={BindAddress:"bindAddress",BindPort:"bindPort",AuthToken:"authToken",DashboardAddress:"dashboardAddress",DashboardPort:"dashboardPort",DashboardUser:"dashboardUser",DashboardPassword:"dashboardPassword",PortStart:"portRangeStart",PortEnd:"portRangeEnd",LogLevel:"logLevel",LogDays:"logMaxDays"};for(const[id,key]of Object.entries(map))$(`#cfg-${id.replace(/[A-Z]/g,c=>"-"+c.toLowerCase()).replace(/^-/,"")}`).value=m[key]??"";$("#cfg-prometheus").checked=m.enablePrometheus}catch(e){toast(e.message)}}
@@ -121,3 +132,18 @@ $("#refresh-traffic-status").onclick=loadTrafficStatus;
 $("#new-node").onclick=()=>{const form=$("#node-enrollment-form");form.classList.toggle("hidden");if(!form.classList.contains("hidden")&&!$("#node-enrollment-master-url").value)$("#node-enrollment-master-url").value=window.location.origin};
 $("#node-enrollment-form").onsubmit=async event=>{event.preventDefault();const status=$("#node-enrollment-status"),command=$("#node-enrollment-command");status.textContent="正在生成节点部署命令...";try{const result=await api("/api/admin/nodes/enrollment",{method:"POST",body:JSON.stringify({name:$("#node-enrollment-name").value,publicHost:$("#node-enrollment-host").value,masterUrl:$("#node-enrollment-master-url").value})});command.value=result.command;command.classList.remove("hidden");$("#node-enrollment-actions").classList.remove("hidden");status.textContent=`节点 ${result.name} 已登记，执行下方命令后将自动上线。`;toast("节点部署命令已生成");loadNodes()}catch(error){status.textContent=error.message;toast(error.message)}};
 $("#copy-node-enrollment-command").onclick=async()=>{const command=$("#node-enrollment-command");try{await copyText(command.value,command);toast("部署命令已复制到剪贴板")}catch(error){toast(error.message)}};
+
+document.querySelectorAll("[data-traffic-dashboard]").forEach(root=>{
+  root.dataset.range="24h";
+  root.querySelectorAll(".traffic-range button").forEach(button=>button.onclick=()=>{
+    root.dataset.range=button.dataset.range;
+    root.querySelectorAll(".traffic-range button").forEach(item=>item.classList.toggle("active",item===button));
+    loadTrafficDashboard(root.dataset.trafficDashboard);
+  });
+});
+const tableObserver=new MutationObserver(records=>{
+  const containers=new Set(records.map(record=>record.target.closest?.("table")||record.target.querySelector?.("table")).filter(Boolean));
+  containers.forEach(table=>decorateResponsiveTables(table.parentElement||document));
+});
+tableObserver.observe(document.querySelector("main"),{childList:true,subtree:true});
+decorateResponsiveTables();

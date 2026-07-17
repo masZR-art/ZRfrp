@@ -17,8 +17,10 @@ public sealed class TrafficCollector : BackgroundService
     public DateTimeOffset? LastSuccessAt { get; private set; }
     public int LastDashboardProxyCount { get; private set; }
     public int LastMatchedSampleCount { get; private set; }
+    public int LastUnmatchedProxyCount { get; private set; }
     public long LastAppliedBytes { get; private set; }
     public string LastError { get; private set; } = "尚未执行流量采集。";
+    public string LastUnmatchedSummary { get; private set; } = "";
 
     public TrafficCollector(
         FrpsManager frps,
@@ -42,6 +44,7 @@ public sealed class TrafficCollector : BackgroundService
             {
                 LastAttemptAt = DateTimeOffset.UtcNow;
                 var samples = new List<TrafficSample>();
+                var unmatched = new List<string>();
                 var dashboardProxyCount = 0;
                 foreach (var type in ProxyTypes)
                 {
@@ -50,12 +53,14 @@ public sealed class TrafficCollector : BackgroundService
                     {
                         var proxies = EnumerateProxies(json.Value).ToArray();
                         dashboardProxyCount += proxies.Length;
-                        samples.AddRange(Collect(type, proxies));
+                        samples.AddRange(Collect(type, proxies, unmatched));
                     }
                 }
 
                 LastDashboardProxyCount = dashboardProxyCount;
                 LastMatchedSampleCount = samples.Count;
+                LastUnmatchedProxyCount = unmatched.Count;
+                LastUnmatchedSummary = string.Join("；", unmatched.Take(5));
                 if (dashboardProxyCount == 0 && !string.IsNullOrWhiteSpace(_frps.LastDashboardError))
                     throw new InvalidOperationException(_frps.LastDashboardError);
 
@@ -85,7 +90,10 @@ public sealed class TrafficCollector : BackgroundService
         }
     }
 
-    private IEnumerable<TrafficSample> Collect(string type, IEnumerable<JsonElement> proxies)
+    private IEnumerable<TrafficSample> Collect(
+        string type,
+        IEnumerable<JsonElement> proxies,
+        ICollection<string> unmatched)
     {
         foreach (var proxy in proxies)
         {
@@ -97,9 +105,11 @@ public sealed class TrafficCollector : BackgroundService
 
             var user = ReadString(proxy, "user");
             var clientId = ReadString(proxy, "clientID", "clientId", "client_id");
-            var accountId = ResolveAccountId(type, name, user, clientId);
+            var remotePort = ReadNestedLong(proxy, "conf", "remotePort", "remote_port");
+            var accountId = ResolveAccountId(type, name, user, clientId, remotePort);
             if (string.IsNullOrWhiteSpace(accountId))
             {
+                unmatched.Add($"{type}/{name} (user={ValueOrDash(user)}, client={ValueOrDash(clientId)}, port={remotePort})");
                 continue;
             }
 
@@ -108,11 +118,12 @@ public sealed class TrafficCollector : BackgroundService
             var current = SaturatingAdd(trafficIn, trafficOut);
             yield return new TrafficSample(
                 accountId, type, name, clientId, Math.Max(0, current),
-                Math.Max(0, trafficIn), Math.Max(0, trafficOut));
+                Math.Max(0, trafficIn), Math.Max(0, trafficOut), remotePort);
         }
     }
 
-    private string ResolveAccountId(string type, string proxyName, string user, string clientId)
+    private string ResolveAccountId(
+        string type, string proxyName, string user, string clientId, int remotePort)
     {
         if (!string.IsNullOrWhiteSpace(user))
         {
@@ -130,6 +141,26 @@ public sealed class TrafficCollector : BackgroundService
             }
         }
 
+        var allocations = _store.State.Allocations.Where(item =>
+            item.Active
+            && !string.IsNullOrWhiteSpace(item.AccountId)
+            && item.ProxyType.Equals(type, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+        var allocation = allocations
+            .Select(item => new
+            {
+                Item = item,
+                Score = AllocationMatchScore(item, proxyName, clientId, remotePort)
+            })
+            .Where(match => match.Score > 0)
+            .OrderByDescending(match => match.Score)
+            .ThenByDescending(match => match.Item.UpdatedAt)
+            .FirstOrDefault()?.Item;
+        if (allocation is not null)
+        {
+            return allocation.AccountId;
+        }
+
         if (!string.IsNullOrWhiteSpace(clientId))
         {
             var trackedClient = _store.State.Clients.FirstOrDefault(item =>
@@ -139,19 +170,6 @@ public sealed class TrafficCollector : BackgroundService
             {
                 return trackedClient.AccountId;
             }
-        }
-
-        var allocation = _store.State.Allocations.FirstOrDefault(item =>
-            item.Active
-            && item.ProxyType.Equals(type, StringComparison.OrdinalIgnoreCase)
-            && (string.IsNullOrWhiteSpace(clientId)
-                || item.ClientId.Equals(clientId, StringComparison.Ordinal))
-            && (item.ProxyName.Equals(proxyName, StringComparison.Ordinal)
-                || proxyName.Equals($"{item.AccountId}.{item.ProxyName}", StringComparison.Ordinal)
-                || proxyName.EndsWith("." + item.ProxyName, StringComparison.Ordinal)));
-        if (allocation is not null && !string.IsNullOrWhiteSpace(allocation.AccountId))
-        {
-            return allocation.AccountId;
         }
 
         allocation = _store.State.Allocations.FirstOrDefault(item => item.Active
@@ -164,6 +182,22 @@ public sealed class TrafficCollector : BackgroundService
             .Where(item => item.Role == "customer")
             .Select(item => item.Id)
             .FirstOrDefault(id => proxyName.StartsWith(id + ".", StringComparison.Ordinal)) ?? "";
+    }
+
+    private static int AllocationMatchScore(
+        PortAllocation allocation, string proxyName, string clientId, int remotePort)
+    {
+        var nameMatches = allocation.ProxyName.Equals(proxyName, StringComparison.Ordinal)
+            || proxyName.Equals($"{allocation.AccountId}.{allocation.ProxyName}", StringComparison.Ordinal)
+            || proxyName.EndsWith("." + allocation.ProxyName, StringComparison.Ordinal);
+        var clientMatches = !string.IsNullOrWhiteSpace(clientId)
+            && allocation.ClientId.Equals(clientId, StringComparison.Ordinal);
+        var portMatches = remotePort > 0 && allocation.RemotePort == remotePort;
+        if (!nameMatches && !clientMatches && !portMatches)
+        {
+            return 0;
+        }
+        return (nameMatches ? 4 : 0) + (clientMatches ? 3 : 0) + (portMatches ? 5 : 0);
     }
 
     private async Task ReportToMasterAsync(
@@ -255,6 +289,21 @@ public sealed class TrafficCollector : BackgroundService
         }
         return 0;
     }
+
+    private static int ReadNestedLong(
+        JsonElement element, string objectName, params string[] names)
+    {
+        if (!element.TryGetProperty(objectName, out var nested)
+            || nested.ValueKind != JsonValueKind.Object)
+        {
+            return 0;
+        }
+        var value = ReadLong(nested, names);
+        return value is > 0 and <= 65535 ? (int)value : 0;
+    }
+
+    private static string ValueOrDash(string value) =>
+        string.IsNullOrWhiteSpace(value) ? "-" : value;
 
     private static long SaturatingAdd(long left, long right) =>
         right > 0 && left > long.MaxValue - right ? long.MaxValue : left + right;

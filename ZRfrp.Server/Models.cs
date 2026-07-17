@@ -42,6 +42,7 @@ public sealed class ServerState
     public Dictionary<string, long> TrafficSnapshots { get; set; } = [];
     public Dictionary<string, long> TrafficInSnapshots { get; set; } = [];
     public Dictionary<string, long> TrafficOutSnapshots { get; set; } = [];
+    public List<TrafficHistoryBucket> TrafficHistory { get; set; } = [];
     public long TotalTrafficInBytes { get; set; }
     public long TotalTrafficOutBytes { get; set; }
     public SmtpSettings Smtp { get; set; } = new();
@@ -230,8 +231,44 @@ public sealed record PeerAccountValidationResponse(
     string Id, string Username, long TrafficQuotaBytes, long TrafficUsedBytes);
 public sealed record TrafficSample(
     string AccountId, string ProxyType, string ProxyName, string ClientId, long TotalBytes,
-    long TrafficInBytes = 0, long TrafficOutBytes = 0);
+    long TrafficInBytes = 0, long TrafficOutBytes = 0, int RemotePort = 0);
 public sealed record PeerTrafficReport(string NodeId, IReadOnlyList<TrafficSample> Samples);
+
+public sealed class TrafficHistoryBucket
+{
+    public DateTimeOffset StartedAt { get; set; }
+    public List<TrafficHistorySlice> Slices { get; set; } = [];
+}
+
+public sealed class TrafficHistorySlice
+{
+    public string AccountId { get; set; } = "";
+    public string NodeId { get; set; } = "";
+    public string ProxyType { get; set; } = "";
+    public string ProxyName { get; set; } = "";
+    public long TrafficInBytes { get; set; }
+    public long TrafficOutBytes { get; set; }
+}
+
+public sealed record TrafficTimelinePoint(
+    DateTimeOffset Time, long TrafficInBytes, long TrafficOutBytes);
+public sealed record TrafficDimensionItem(
+    string Key, string Label, long TrafficInBytes, long TrafficOutBytes, long TotalBytes);
+public sealed record TrafficStatisticsResponse(
+    string Range,
+    DateTimeOffset From,
+    DateTimeOffset To,
+    long LifetimeBytes,
+    long LifetimeTrafficInBytes,
+    long LifetimeTrafficOutBytes,
+    long PeriodTrafficInBytes,
+    long PeriodTrafficOutBytes,
+    bool HasHistory,
+    IReadOnlyList<TrafficTimelinePoint> Timeline,
+    IReadOnlyList<TrafficDimensionItem> Nodes,
+    IReadOnlyList<TrafficDimensionItem> Accounts,
+    IReadOnlyList<TrafficDimensionItem> Protocols,
+    IReadOnlyList<TrafficDimensionItem> Tunnels);
 public sealed record ConfigUpdateRequest(string Content, bool Restart);
 public sealed record FrpsInstallStatus(
     bool Installed,
