@@ -77,14 +77,14 @@ public sealed class SmtpSettings
     public int VerificationMinutes { get; set; } = 15;
     public string SubjectTemplate { get; set; } = "[{{site_name}}] 邮箱验证码";
     public string HtmlTemplate { get; set; } = """
-<!doctype html><html><body style="margin:0;padding:24px;background:#f4f4f5;font-family:Arial,'Microsoft YaHei',sans-serif;color:#18181b">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center">
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 8px 30px rgba(15,23,42,.10)">
-<tr><td style="padding:28px 40px;background:#4f46e5;color:#ffffff"><h1 style="margin:0;font-size:26px;line-height:1.3">邮箱验证码</h1></td></tr>
-<tr><td style="padding:42px 40px;font-size:16px;line-height:1.8"><p style="margin:0 0 18px">{{recipient_name}}，您好：</p><p style="margin:0 0 18px">您的验证码是：</p>
-<div style="margin:30px 0;text-align:center;font-size:38px;font-weight:700;letter-spacing:10px;color:#111827">{{code}}</div>
-<p style="margin:0 0 18px">验证码将在 <strong>{{expires_minutes}} 分钟</strong>后失效。</p><p style="margin:0">如果不是您本人操作，请忽略此邮件。</p></td></tr>
-<tr><td style="padding:20px 40px;background:#fafafa;color:#94a3b8;font-size:13px">This email was sent by {{site_name}}. Please do not reply directly.</td></tr>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;background:#f4f4f5;font-family:Arial,'Microsoft YaHei',sans-serif;color:#18181b">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;background:#f4f4f5;table-layout:fixed"><tr><td align="center" style="padding:16px 12px">
+<table role="presentation" width="600" cellspacing="0" cellpadding="0" style="width:100%;max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 8px 30px rgba(15,23,42,.10)">
+<tr><td align="left" style="padding:24px;background:#4f46e5;color:#ffffff"><h1 style="margin:0;font-size:25px;line-height:1.25">邮箱验证码</h1></td></tr>
+<tr><td align="left" style="padding:28px 24px;font-size:16px;line-height:1.5"><p style="margin:0 0 12px">{{recipient_name}}，您好：</p><p style="margin:0 0 12px">您的验证码是：</p>
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center" style="padding:8px 0 20px;font-size:36px;line-height:1.2;font-weight:700;letter-spacing:7px;white-space:nowrap;color:#111827">{{code}}</td></tr></table>
+<p style="margin:0 0 12px">验证码将在 <strong>{{expires_minutes}} 分钟</strong>后失效。</p><p style="margin:0">如果不是您本人操作，请忽略此邮件。</p></td></tr>
+<tr><td align="left" style="padding:16px 24px;background:#fafafa;color:#64748b;font-size:13px;line-height:1.45">This email was sent by {{site_name}}. Please do not reply directly.</td></tr>
 </table></td></tr></table></body></html>
 """;
 }

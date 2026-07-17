@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Mail;
+using System.Text;
 using System.Text.Encodings.Web;
 
 namespace ZRfrp.Server;
@@ -81,7 +82,9 @@ public sealed class SmtpService
         {
             From = new MailAddress(settings.FromEmail, settings.FromName),
             Subject = subject,
+            SubjectEncoding = Encoding.UTF8,
             Body = html,
+            BodyEncoding = Encoding.UTF8,
             IsBodyHtml = true
         };
         message.To.Add(recipient);

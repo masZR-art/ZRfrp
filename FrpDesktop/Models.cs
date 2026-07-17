@@ -30,6 +30,16 @@ public sealed class AppState
 
     public string AccountUsername { get; set; } = "";
 
+    public string AccountId { get; set; } = "";
+
+    public string AccountAccessToken { get; set; } = "";
+
+    public DateTimeOffset AccountTokenExpiresAt { get; set; }
+
+    public string AccountRefreshToken { get; set; } = "";
+
+    public DateTimeOffset AccountRefreshExpiresAt { get; set; }
+
     public bool AccountLoginSkipped { get; set; }
 
     public ObservableCollection<FrpProfile> Profiles { get; set; } = new();

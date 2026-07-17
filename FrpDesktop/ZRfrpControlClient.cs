@@ -38,11 +38,9 @@ public sealed class ZRfrpControlClient
         var text = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var error = JsonSerializer.Deserialize<ControlError>(text, JsonOptions);
-            throw new InvalidOperationException(error?.Error ?? "账号登录失败。");
+            throw CreateApiException(response.StatusCode, text, "账号登录失败。");
         }
-        return JsonSerializer.Deserialize<ClientAccountSession>(text, JsonOptions)
-            ?? throw new InvalidOperationException("控制平台返回了无效登录结果。");
+        return DeserializeResponse<ClientAccountSession>(text, "控制平台返回了空的登录结果。", "控制平台返回了无效登录结果。");
         }
     }
 
@@ -57,11 +55,9 @@ public sealed class ZRfrpControlClient
         var text = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var error = JsonSerializer.Deserialize<ControlError>(text, JsonOptions);
-            throw new InvalidOperationException(error?.Error ?? "节点配置导出失败。");
+            throw CreateApiException(response.StatusCode, text, "节点配置导出失败。");
         }
-        return JsonSerializer.Deserialize<NodeExportDocument>(text, JsonOptions)
-            ?? throw new InvalidOperationException("控制平台返回了无效节点配置。");
+        return DeserializeResponse<NodeExportDocument>(text, "控制平台返回了空的节点配置。", "控制平台返回了无效节点配置。");
     }
 
     public async Task<ClientAccountSession> RefreshAsync(
@@ -76,11 +72,9 @@ public sealed class ZRfrpControlClient
         var text = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var error = JsonSerializer.Deserialize<ControlError>(text, JsonOptions);
-            throw new InvalidOperationException(error?.Error ?? "登录授权续期失败。");
+            throw CreateApiException(response.StatusCode, text, "登录授权续期失败。");
         }
-        return JsonSerializer.Deserialize<ClientAccountSession>(text, JsonOptions)
-            ?? throw new InvalidOperationException("控制平台返回了无效续期结果。");
+        return DeserializeResponse<ClientAccountSession>(text, "控制平台返回了空的续期结果。", "控制平台返回了无效续期结果。");
     }
 
     public async Task<ManagedAllocation> AllocateAsync(
@@ -102,22 +96,12 @@ public sealed class ZRfrpControlClient
         var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            string? message = null;
-            try
-            {
-                var error = JsonSerializer.Deserialize<ControlError>(responseText, JsonOptions);
-                message = error?.Error;
-            }
-            catch (JsonException)
-            {
-                // Use the status-based fallback when the server did not return JSON.
-            }
-            throw new ControlApiException(
-                response.StatusCode,
-                message ?? $"服务端拒绝了分配请求 ({(int)response.StatusCode})。");
+            throw CreateApiException(
+                response.StatusCode, responseText,
+                $"服务端拒绝了分配请求 ({(int)response.StatusCode})。");
         }
-        return JsonSerializer.Deserialize<ManagedAllocation>(responseText, JsonOptions)
-            ?? throw new InvalidOperationException("服务端返回了无效的分配结果。");
+        return DeserializeResponse<ManagedAllocation>(
+            responseText, "服务端返回了空的分配结果。", "服务端返回了无效的分配结果。");
     }
 
     public async Task ReleaseAsync(FrpProfile profile, string allocationId)
@@ -133,18 +117,9 @@ public sealed class ZRfrpControlClient
         if (!response.IsSuccessStatusCode)
         {
             var responseText = await response.Content.ReadAsStringAsync();
-            string? message = null;
-            try
-            {
-                message = JsonSerializer.Deserialize<ControlError>(responseText, JsonOptions)?.Error;
-            }
-            catch (JsonException)
-            {
-                // Use the status-based fallback when the server did not return JSON.
-            }
-            throw new ControlApiException(
-                response.StatusCode,
-                message ?? $"服务端拒绝了租约释放请求 ({(int)response.StatusCode})。");
+            throw CreateApiException(
+                response.StatusCode, responseText,
+                $"服务端拒绝了租约释放请求 ({(int)response.StatusCode})。");
         }
     }
 
@@ -234,6 +209,43 @@ public sealed class ZRfrpControlClient
         }
 
         return uri;
+    }
+
+    private static ControlApiException CreateApiException(
+        HttpStatusCode statusCode, string responseText, string fallbackMessage)
+    {
+        string? message = null;
+        if (!string.IsNullOrWhiteSpace(responseText))
+        {
+            try
+            {
+                message = JsonSerializer.Deserialize<ControlError>(responseText, JsonOptions)?.Error;
+            }
+            catch (JsonException)
+            {
+                // Reverse proxies may return plain text or HTML. Preserve the stable fallback.
+            }
+        }
+
+        return new ControlApiException(statusCode, message ?? fallbackMessage);
+    }
+
+    private static T DeserializeResponse<T>(string responseText, string emptyMessage, string invalidMessage)
+    {
+        if (string.IsNullOrWhiteSpace(responseText))
+        {
+            throw new InvalidOperationException(emptyMessage);
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<T>(responseText, JsonOptions)
+                ?? throw new InvalidOperationException(invalidMessage);
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidOperationException(invalidMessage, exception);
+        }
     }
 
     private sealed record ControlError(string Error);

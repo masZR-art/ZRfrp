@@ -136,6 +136,31 @@ public sealed class AppSettingsStore
         state.NetworkProxyUsername ??= "";
         state.NetworkProxyPassword ??= "";
 
+        var sessionSource = state.Profiles
+            .Where(profile => profile.ServerManaged)
+            .OrderByDescending(profile => profile.AccountRefreshExpiresAt)
+            .ThenByDescending(profile => profile.AccountTokenExpiresAt)
+            .FirstOrDefault(profile =>
+                !string.IsNullOrWhiteSpace(profile.AccountAccessToken)
+                || !string.IsNullOrWhiteSpace(profile.AccountRefreshToken));
+        if (sessionSource is not null)
+        {
+            state.AccountId = string.IsNullOrWhiteSpace(state.AccountId)
+                ? sessionSource.AccountId : state.AccountId;
+            state.AccountAccessToken = string.IsNullOrWhiteSpace(state.AccountAccessToken)
+                ? sessionSource.AccountAccessToken : state.AccountAccessToken;
+            state.AccountTokenExpiresAt = state.AccountTokenExpiresAt == default
+                ? sessionSource.AccountTokenExpiresAt : state.AccountTokenExpiresAt;
+            state.AccountRefreshToken = string.IsNullOrWhiteSpace(state.AccountRefreshToken)
+                ? sessionSource.AccountRefreshToken : state.AccountRefreshToken;
+            state.AccountRefreshExpiresAt = state.AccountRefreshExpiresAt == default
+                ? sessionSource.AccountRefreshExpiresAt : state.AccountRefreshExpiresAt;
+        }
+
+        state.AccountId ??= "";
+        state.AccountAccessToken ??= "";
+        state.AccountRefreshToken ??= "";
+
         return state;
     }
 

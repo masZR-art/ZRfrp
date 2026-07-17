@@ -42,6 +42,7 @@ public partial class MainWindow : Window
     private readonly FrpProcessRunner _runner = new();
     private readonly ZRfrpControlClient _controlClient = new();
     private readonly DesktopUpdateService _updateService = new();
+    private readonly SemaphoreSlim _authorizationRefreshGate = new(1, 1);
     private readonly StringBuilder _logBuffer = new();
     private readonly FrpEnvironmentService _environmentService;
     private readonly HashSet<string> _announcedProxyAddresses = new(StringComparer.OrdinalIgnoreCase);
@@ -62,7 +63,6 @@ public partial class MainWindow : Window
     private bool _trayDisposed;
     private bool _isLoadingAppSettings;
     private bool _isApplyingProxyToggle;
-    private bool _authorizationRefreshedThisRun;
     private DesktopUpdateInfo? _desktopUpdate;
     private Window? _floatingPanelWindow;
     private FrameworkElement? _floatingPanelContent;
@@ -549,6 +549,18 @@ public partial class MainWindow : Window
             _runner.Start(profile.FrpcPath, configPath);
             return true;
         }
+        catch (AccountAuthorizationRequiredException exception)
+        {
+            InvalidateAccountAuthorization();
+            AppendLog(exception.Message);
+            if (showDialogOnError)
+            {
+                await ShowConfirmAsync("需要重新登录", exception.Message);
+                ShowFirstLoginDialog();
+            }
+
+            return false;
+        }
         catch (Exception exception)
         {
             AppendLog(exception.Message);
@@ -764,7 +776,7 @@ public partial class MainWindow : Window
             AccountPasswordBox.Password = "";
             SaveState();
             UpdateAccountStatus();
-            AppendLog($"控制平台账号“{session.Username}”登录成功，节点已同步。");
+            AppendLog($"控制平台账号“{session.Username}”登录成功。");
         }
         catch (Exception exception)
         {
@@ -775,14 +787,15 @@ public partial class MainWindow : Window
 
     private void UpdateAccountStatus()
     {
-        var profile = _state.Profiles.FirstOrDefault(item =>
-            !string.IsNullOrWhiteSpace(item.AccountAccessToken)
-            && item.AccountTokenExpiresAt > DateTimeOffset.UtcNow);
-        var isLoggedIn = profile is not null;
-        AccountStatusText.Text = !isLoggedIn
-            ? "未登录，登录后才能获取服务授权并启动连接。"
-            : $"已登录：{_state.AccountUsername}，授权有效至 {profile!.AccountTokenExpiresAt.LocalDateTime:g}";
-        AccountStatusText.Foreground = profile is null ? LogWarningBrush : LogSuccessBrush;
+        var accessValid = HasUsableAccessToken(TimeSpan.Zero);
+        var refreshValid = HasUsableRefreshToken();
+        var isLoggedIn = accessValid || refreshValid;
+        AccountStatusText.Text = accessValid
+            ? $"已登录：{_state.AccountUsername}，授权有效至 {_state.AccountTokenExpiresAt.LocalDateTime:g}"
+            : refreshValid
+                ? $"已登录：{_state.AccountUsername}，访问授权将在联网后自动续期。"
+                : "未登录，登录后才能获取服务授权并启动连接。";
+        AccountStatusText.Foreground = isLoggedIn ? LogSuccessBrush : LogWarningBrush;
         AccountLoginFormPanel.Visibility = isLoggedIn ? Visibility.Collapsed : Visibility.Visible;
         AccountLogoutButton.Visibility = isLoggedIn ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -802,6 +815,8 @@ public partial class MainWindow : Window
             profile.AccountRefreshToken = "";
             profile.AccountRefreshExpiresAt = default;
         }
+
+        ClearCentralAccountSession();
 
         _state.PlatformUrl = "";
         _state.AccountUsername = "";
@@ -824,9 +839,7 @@ public partial class MainWindow : Window
             return false;
         }
 
-        return !_state.Profiles.Any(item =>
-            !string.IsNullOrWhiteSpace(item.AccountAccessToken)
-            && item.AccountTokenExpiresAt > DateTimeOffset.UtcNow);
+        return !HasUsableAccessToken(TimeSpan.Zero) && !HasUsableRefreshToken();
     }
 
     private void ShowFirstLoginDialog()
@@ -882,20 +895,26 @@ public partial class MainWindow : Window
         _state.PlatformUrl = normalizedPlatformUrl;
         _state.AccountUsername = session.Username;
         _state.AccountLoginSkipped = false;
+        ApplyAccountSession(session, normalizedPlatformUrl);
+        SaveState();
 
-        var document = await _controlClient.ExportNodesAsync(normalizedPlatformUrl, session.AccessToken);
-        var imported = ImportNodeDocument(document, session);
-
-        foreach (var profile in _state.Profiles.Where(item => item.ServerManaged))
+        try
         {
-            profile.AccountId = session.AccountId;
-            profile.AccountAccessToken = session.AccessToken;
-            profile.AccountTokenExpiresAt = session.ExpiresAt;
-            profile.AccountRefreshToken = session.RefreshToken;
-            profile.AccountRefreshExpiresAt = session.RefreshExpiresAt;
-            // Keep using the address the user successfully logged in through even
-            // when a reverse proxy does not forward its public Host header.
-            profile.ControlApiUrl = normalizedPlatformUrl;
+            var document = await _controlClient.ExportNodesAsync(normalizedPlatformUrl, session.AccessToken);
+            var imported = ImportNodeDocument(document, session);
+            ApplyAccountSession(session, normalizedPlatformUrl);
+            SaveState();
+            AppendLog(imported == 0 ? "节点配置已是最新。" : $"已自动载入 {imported} 个节点。");
+        }
+        catch (ControlApiException exception)
+            when (exception.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            InvalidateAccountAuthorization();
+            throw new AccountAuthorizationRequiredException("登录会话未能通过控制平台验证，请重新登录。", exception);
+        }
+        catch (Exception exception)
+        {
+            AppendLog($"账号登录成功，但节点同步暂时失败：{exception.Message}");
         }
 
         if (_selectedProfile is null && _state.Profiles.Count > 0)
@@ -904,55 +923,52 @@ public partial class MainWindow : Window
             LoadProfile(_state.Profiles[0]);
         }
 
-        AppendLog(imported == 0 ? "节点配置已是最新。" : $"已自动载入 {imported} 个节点。");
         return session;
     }
 
     private async Task RefreshAuthorizedNodesAsync()
     {
-        var source = _state.Profiles.FirstOrDefault(profile =>
-            profile.ServerManaged
-            && !string.IsNullOrWhiteSpace(profile.AccountRefreshToken)
-            && profile.AccountRefreshExpiresAt > DateTimeOffset.UtcNow)
-            ?? _state.Profiles.FirstOrDefault(profile =>
-                profile.ServerManaged
-                && !string.IsNullOrWhiteSpace(profile.AccountAccessToken)
-                && profile.AccountTokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(1));
+        var source = _state.Profiles.FirstOrDefault(profile => profile.ServerManaged);
         var platformUrl = string.IsNullOrWhiteSpace(_state.PlatformUrl)
             ? source?.ControlApiUrl ?? ""
             : _state.PlatformUrl;
-        if (source is null || string.IsNullOrWhiteSpace(platformUrl))
+        if (string.IsNullOrWhiteSpace(platformUrl)
+            || (!HasUsableAccessToken(TimeSpan.Zero) && !HasUsableRefreshToken()))
         {
             return;
         }
 
         try
         {
-            if (!string.IsNullOrWhiteSpace(source.AccountRefreshToken))
+            await EnsureAuthorizationAsync(source);
+            var rejectedAccessToken = _state.AccountAccessToken;
+            NodeExportDocument document;
+            try
             {
-                var refreshed = await _controlClient.RefreshAsync(
-                    platformUrl, source.AccountRefreshToken, Environment.MachineName);
-                ApplyAccountSession(refreshed, platformUrl);
-                source = _state.Profiles.First(profile => profile.Id == source.Id);
-                _authorizationRefreshedThisRun = true;
+                document = await _controlClient.ExportNodesAsync(platformUrl, rejectedAccessToken);
             }
-            var document = await _controlClient.ExportNodesAsync(platformUrl, source.AccountAccessToken);
-            var session = new ClientAccountSession(
-                source.AccountId,
-                _state.AccountUsername,
-                source.AccountAccessToken,
-                source.AccountTokenExpiresAt,
-                source.AccountRefreshToken,
-                source.AccountRefreshExpiresAt,
-                "",
-                0,
-                "",
-                0,
-                0);
+            catch (ControlApiException exception)
+                when (exception.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                await EnsureAuthorizationAsync(source, forceRefresh: true, rejectedAccessToken);
+                document = await _controlClient.ExportNodesAsync(platformUrl, _state.AccountAccessToken);
+            }
+            var session = CurrentAccountSession();
             ImportNodeDocument(document, session);
             ApplyAccountSession(session, platformUrl);
             SaveState();
             AppendLog("已从控制平台刷新节点地址与认证信息。");
+        }
+        catch (AccountAuthorizationRequiredException exception)
+        {
+            InvalidateAccountAuthorization();
+            AppendLog(exception.Message);
+        }
+        catch (ControlApiException exception)
+            when (exception.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            InvalidateAccountAuthorization();
+            AppendLog("控制平台登录会话已失效，请重新登录。");
         }
         catch (Exception exception)
         {
@@ -960,38 +976,126 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task EnsureAuthorizationAsync(FrpProfile profile, bool forceRefresh = false)
+    private async Task EnsureAuthorizationAsync(
+        FrpProfile? profile, bool forceRefresh = false, string? rejectedAccessToken = null)
     {
-        if (!forceRefresh
-            && _authorizationRefreshedThisRun
-            && profile.AccountTokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(5)) return;
-        if (string.IsNullOrWhiteSpace(profile.AccountRefreshToken)
-            || profile.AccountRefreshExpiresAt <= DateTimeOffset.UtcNow)
+        if (!forceRefresh && HasUsableAccessToken(TimeSpan.FromMinutes(5)))
         {
-            if (!forceRefresh && profile.AccountTokenExpiresAt > DateTimeOffset.UtcNow.AddMinutes(1)) return;
-            throw new InvalidOperationException("登录授权已失效，请重新登录一次以启用自动续期。");
+            SynchronizeProfileAuthorization();
+            return;
         }
-        var platformUrl = string.IsNullOrWhiteSpace(_state.PlatformUrl)
-            ? profile.ControlApiUrl : _state.PlatformUrl;
-        var refreshed = await _controlClient.RefreshAsync(
-            platformUrl, profile.AccountRefreshToken, Environment.MachineName);
-        ApplyAccountSession(refreshed, platformUrl);
-        _authorizationRefreshedThisRun = true;
-        SaveState();
-        AppendLog("控制平台登录授权已自动续期。");
+
+        await _authorizationRefreshGate.WaitAsync();
+        try
+        {
+            if (!forceRefresh && HasUsableAccessToken(TimeSpan.FromMinutes(5)))
+            {
+                SynchronizeProfileAuthorization();
+                return;
+            }
+            if (forceRefresh
+                && !string.IsNullOrWhiteSpace(rejectedAccessToken)
+                && !_state.AccountAccessToken.Equals(rejectedAccessToken, StringComparison.Ordinal)
+                && HasUsableAccessToken(TimeSpan.FromMinutes(1)))
+            {
+                SynchronizeProfileAuthorization();
+                return;
+            }
+            if (!HasUsableRefreshToken())
+            {
+                throw new AccountAuthorizationRequiredException("登录会话已失效，请重新登录。");
+            }
+
+            var platformUrl = string.IsNullOrWhiteSpace(_state.PlatformUrl)
+                ? profile?.ControlApiUrl ?? "" : _state.PlatformUrl;
+            if (string.IsNullOrWhiteSpace(platformUrl))
+            {
+                throw new AccountAuthorizationRequiredException("控制平台地址缺失，请重新登录。");
+            }
+
+            ClientAccountSession refreshed;
+            try
+            {
+                refreshed = await _controlClient.RefreshAsync(
+                    platformUrl, _state.AccountRefreshToken, Environment.MachineName);
+            }
+            catch (ControlApiException exception)
+                when (exception.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                throw new AccountAuthorizationRequiredException("登录会话已失效，请重新登录。", exception);
+            }
+
+            ApplyAccountSession(refreshed, platformUrl);
+            SaveState();
+            AppendLog("控制平台登录授权已自动续期。");
+        }
+        finally
+        {
+            _authorizationRefreshGate.Release();
+        }
     }
 
     private void ApplyAccountSession(ClientAccountSession session, string platformUrl)
     {
+        _state.AccountId = session.AccountId;
+        _state.AccountUsername = session.Username;
+        _state.AccountAccessToken = session.AccessToken;
+        _state.AccountTokenExpiresAt = session.ExpiresAt;
+        _state.AccountRefreshToken = session.RefreshToken;
+        _state.AccountRefreshExpiresAt = session.RefreshExpiresAt;
+        _state.PlatformUrl = platformUrl;
+        SynchronizeProfileAuthorization();
+    }
+
+    private void SynchronizeProfileAuthorization()
+    {
         foreach (var profile in _state.Profiles.Where(item => item.ServerManaged))
         {
-            profile.AccountId = session.AccountId;
-            profile.AccountAccessToken = session.AccessToken;
-            profile.AccountTokenExpiresAt = session.ExpiresAt;
-            profile.AccountRefreshToken = session.RefreshToken;
-            profile.AccountRefreshExpiresAt = session.RefreshExpiresAt;
-            profile.ControlApiUrl = platformUrl;
+            profile.AccountId = _state.AccountId;
+            profile.AccountAccessToken = _state.AccountAccessToken;
+            profile.AccountTokenExpiresAt = _state.AccountTokenExpiresAt;
+            profile.AccountRefreshToken = _state.AccountRefreshToken;
+            profile.AccountRefreshExpiresAt = _state.AccountRefreshExpiresAt;
+            profile.ControlApiUrl = _state.PlatformUrl;
         }
+    }
+
+    private bool HasUsableAccessToken(TimeSpan minimumRemaining) =>
+        !string.IsNullOrWhiteSpace(_state.AccountAccessToken)
+        && _state.AccountTokenExpiresAt > DateTimeOffset.UtcNow.Add(minimumRemaining);
+
+    private bool HasUsableRefreshToken() =>
+        !string.IsNullOrWhiteSpace(_state.AccountRefreshToken)
+        && _state.AccountRefreshExpiresAt > DateTimeOffset.UtcNow;
+
+    private ClientAccountSession CurrentAccountSession() => new(
+        _state.AccountId,
+        _state.AccountUsername,
+        _state.AccountAccessToken,
+        _state.AccountTokenExpiresAt,
+        _state.AccountRefreshToken,
+        _state.AccountRefreshExpiresAt,
+        "",
+        0,
+        "",
+        0,
+        0);
+
+    private void ClearCentralAccountSession()
+    {
+        _state.AccountId = "";
+        _state.AccountAccessToken = "";
+        _state.AccountTokenExpiresAt = default;
+        _state.AccountRefreshToken = "";
+        _state.AccountRefreshExpiresAt = default;
+    }
+
+    private void InvalidateAccountAuthorization()
+    {
+        ClearCentralAccountSession();
+        SynchronizeProfileAuthorization();
+        SaveState();
+        UpdateAccountStatus();
     }
 
     private async Task CheckDesktopUpdateAsync(bool showNotification)
@@ -1757,6 +1861,7 @@ public partial class MainWindow : Window
         {
             try
             {
+                var rejectedAccessToken = profile.AccountAccessToken;
                 try
                 {
                     await _controlClient.ReleaseAsync(profile, proxy.AllocationId);
@@ -1764,9 +1869,17 @@ public partial class MainWindow : Window
                 catch (ControlApiException exception)
                     when (exception.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                 {
-                    await EnsureAuthorizationAsync(profile, forceRefresh: true);
+                    await EnsureAuthorizationAsync(profile, forceRefresh: true, rejectedAccessToken);
                     await _controlClient.ReleaseAsync(profile, proxy.AllocationId);
                 }
+            }
+            catch (AccountAuthorizationRequiredException exception)
+            {
+                InvalidateAccountAuthorization();
+                AppendLog(exception.Message);
+                await ShowConfirmAsync("需要重新登录", exception.Message);
+                ShowFirstLoginDialog();
+                return;
             }
             catch (Exception exception)
             {
@@ -2095,6 +2208,7 @@ public partial class MainWindow : Window
         }
 
         ManagedAllocation allocation;
+        var rejectedAccessToken = profile.AccountAccessToken;
         try
         {
             allocation = await _controlClient.AllocateAsync(profile, proxy);
@@ -2102,7 +2216,7 @@ public partial class MainWindow : Window
         catch (ControlApiException exception)
             when (exception.StatusCode == System.Net.HttpStatusCode.Unauthorized)
         {
-            await EnsureAuthorizationAsync(profile, forceRefresh: true);
+            await EnsureAuthorizationAsync(profile, forceRefresh: true, rejectedAccessToken);
             allocation = await _controlClient.AllocateAsync(profile, proxy);
         }
         if (string.IsNullOrWhiteSpace(profile.ManagedNodeId)
@@ -2608,5 +2722,13 @@ public partial class MainWindow : Window
     private static SolidColorBrush BrushFromHex(string hex)
     {
         return (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!;
+    }
+
+    private sealed class AccountAuthorizationRequiredException : InvalidOperationException
+    {
+        public AccountAuthorizationRequiredException(string message, Exception? innerException = null)
+            : base(message, innerException)
+        {
+        }
     }
 }

@@ -473,7 +473,7 @@ app.MapGet("/api/customer/nodes/export", (
     if (GetBearerAccount(context, accounts) is null
         && context.User.Identity?.IsAuthenticated != true)
     {
-        return Results.Unauthorized();
+        return Results.Json(new { error = "登录会话已失效，请重新登录。" }, statusCode: 401);
     }
 
     return Results.Ok(CreateNodeExport(store, serverOptions, context));
@@ -1123,7 +1123,7 @@ app.MapPost("/api/client/allocate", async (
     var account = await accountResolver.ResolveAsync(GetBearerToken(context), cancellationToken);
     if (account is null && !HasClientKey(context, stateStore.State.ClientApiKeyHash))
     {
-        return Results.Unauthorized();
+        return Results.Json(new { error = "登录会话已失效，请重新登录。" }, statusCode: 401);
     }
     if (account is not null && accounts.IsQuotaExceeded(account))
     {
@@ -1220,7 +1220,7 @@ app.MapDelete("/api/client/allocations/{id}", async (
     if (GetBearerAccount(context, accounts) is null
         && !HasClientKey(context, stateStore.State.ClientApiKeyHash))
     {
-        return Results.Unauthorized();
+        return Results.Json(new { error = "登录会话已失效，请重新登录。" }, statusCode: 401);
     }
     var requestedNodeId = string.IsNullOrWhiteSpace(nodeId) ? LocalNodeId(serverOptions) : nodeId.Trim();
     if (requestedNodeId.Equals(LocalNodeId(serverOptions), StringComparison.Ordinal))
@@ -1671,7 +1671,10 @@ static async Task InitializeSecretsAsync(StateStore store, ILogger logger)
     if (string.IsNullOrWhiteSpace(store.State.Smtp.HtmlTemplate)
         || store.State.Smtp.HtmlTemplate.Equals(legacyEmailTemplate, StringComparison.Ordinal)
         || store.State.Smtp.HtmlTemplate.Contains("{{verification_code}}", StringComparison.Ordinal)
-        || store.State.Smtp.HtmlTemplate.Contains("{{expires_in_minutes}}", StringComparison.Ordinal))
+        || store.State.Smtp.HtmlTemplate.Contains("{{expires_in_minutes}}", StringComparison.Ordinal)
+        || (store.State.Smtp.HtmlTemplate.Contains("max-width:640px", StringComparison.Ordinal)
+            && store.State.Smtp.HtmlTemplate.Contains("line-height:1.8", StringComparison.Ordinal)
+            && store.State.Smtp.HtmlTemplate.Contains("letter-spacing:10px", StringComparison.Ordinal)))
     {
         store.State.Smtp.HtmlTemplate = new SmtpSettings().HtmlTemplate;
         changed = true;
