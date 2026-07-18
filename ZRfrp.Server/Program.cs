@@ -54,8 +54,13 @@ builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationSc
         {
             var accountId = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
             var store = context.HttpContext.RequestServices.GetRequiredService<StateStore>();
-            if (string.IsNullOrWhiteSpace(accountId)
-                || !store.State.Accounts.Any(account => account.Id == accountId && account.Enabled))
+            var account = store.State.Accounts.FirstOrDefault(item =>
+                item.Id == accountId && item.Enabled);
+            var revisionValue = context.Principal?.FindFirstValue("zrfrp_auth_revision");
+            var presentedRevision = int.TryParse(revisionValue, out var parsedRevision)
+                ? parsedRevision
+                : 0;
+            if (account is null || presentedRevision != account.AuthRevision)
             {
                 context.RejectPrincipal();
                 await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -84,6 +89,7 @@ if (args.Length >= 2 && args[0].Equals("--reset-admin", StringComparison.Ordinal
         return;
     }
     admin.PasswordHash = Security.Hash(args[1]);
+    admin.AuthRevision = NextAuthRevision(admin.AuthRevision);
     admin.Enabled = true;
     stateStore.State.AdminPasswordHash = admin.PasswordHash;
     stateStore.State.AccountSessions.RemoveAll(session => session.AccountId == admin.Id);
@@ -210,7 +216,8 @@ app.MapPost("/api/auth/login", async (LoginRequest request, HttpContext context,
     var identity = new ClaimsIdentity([
         new Claim(ClaimTypes.Name, account.Username),
         new Claim(ClaimTypes.NameIdentifier, account.Id),
-        new Claim(ClaimTypes.Role, account.Role)
+        new Claim(ClaimTypes.Role, account.Role),
+        new Claim("zrfrp_auth_revision", account.AuthRevision.ToString())
     ], CookieAuthenticationDefaults.AuthenticationScheme);
     await context.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(identity));
     return Results.Ok(new { ok = true, role = account.Role, username = account.Username });
@@ -232,7 +239,8 @@ app.MapPost("/api/auth/email-code", async (EmailCodeRequest request, StateStore 
         var email = SmtpService.NormalizeEmail(request.Email ?? "");
         if (store.State.Accounts.Any(item => item.Email.Equals(email, StringComparison.OrdinalIgnoreCase)))
             return Results.BadRequest(new { error = "该邮箱已注册。" });
-        await smtp.SendVerificationCodeAsync(email, request.Username ?? "");
+        await smtp.SendVerificationCodeAsync(
+            email, request.Username ?? "", SmtpService.RegistrationPurpose);
         return Results.Ok(new { message = $"验证码已发送，{Math.Clamp(store.State.Smtp.VerificationMinutes, 1, 120)} 分钟内有效。" });
     }
     catch (Exception exception)
@@ -265,7 +273,8 @@ app.MapPost("/api/auth/register", async (RegistrationRequest request, StateStore
         catch (Exception exception) { return Results.BadRequest(new { error = exception.Message }); }
         if (store.State.Accounts.Any(item => item.Email.Equals(email, StringComparison.OrdinalIgnoreCase)))
             return Results.BadRequest(new { error = "该邮箱已注册。" });
-        if (!smtp.VerifyCode(email, request.VerificationCode ?? ""))
+        if (!smtp.VerifyCode(
+                email, request.VerificationCode ?? "", SmtpService.RegistrationPurpose))
         {
             await store.SaveAsync();
             return Results.BadRequest(new { error = "邮箱验证码无效、已过期或尝试次数过多。" });
@@ -284,6 +293,95 @@ app.MapPost("/api/auth/register", async (RegistrationRequest request, StateStore
     store.State.Accounts.Add(account);
     await store.AuditAsync("account", $"客户自助注册账号 {account.Username}");
     return Results.Ok(new { message = "账号注册成功，请使用新账号登录。", username = account.Username });
+});
+
+app.MapPost("/api/auth/password-reset/code", async (
+    PasswordResetCodeRequest request, StateStore store, SmtpService smtp) =>
+{
+    if (!store.State.Smtp.EmailVerificationEnabled)
+    {
+        return Results.Json(
+            new { error = "平台尚未启用邮箱验证码服务，请联系管理员。" },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    string email;
+    try
+    {
+        email = SmtpService.NormalizeEmail(request.Email ?? "");
+    }
+    catch (Exception exception)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+
+    var username = request.Username?.Trim() ?? "";
+    var account = store.State.Accounts.FirstOrDefault(item =>
+        item.Enabled
+        && item.Role.Equals("customer", StringComparison.OrdinalIgnoreCase)
+        && item.Username.Equals(username, StringComparison.OrdinalIgnoreCase)
+        && item.Email.Equals(email, StringComparison.OrdinalIgnoreCase));
+    if (account is not null)
+    {
+        try
+        {
+            await smtp.SendVerificationCodeAsync(
+                email, account.Username, SmtpService.PasswordResetPurpose);
+        }
+        catch (Exception exception)
+        {
+            return Results.BadRequest(new { error = exception.Message });
+        }
+    }
+    else
+    {
+        await Task.Delay(250);
+    }
+
+    return Results.Ok(new
+    {
+        message = $"若账号与邮箱匹配，验证码将在 {Math.Clamp(store.State.Smtp.VerificationMinutes, 1, 120)} 分钟内送达。"
+    });
+});
+
+app.MapPost("/api/auth/password-reset", async (
+    PasswordResetRequest request, StateStore store, SmtpService smtp) =>
+{
+    if (request.NewPassword?.Length < 10)
+    {
+        return Results.BadRequest(new { error = "新密码至少需要 10 个字符。" });
+    }
+
+    string email;
+    try
+    {
+        email = SmtpService.NormalizeEmail(request.Email ?? "");
+    }
+    catch (Exception exception)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+
+    var username = request.Username?.Trim() ?? "";
+    var account = store.State.Accounts.FirstOrDefault(item =>
+        item.Enabled
+        && item.Role.Equals("customer", StringComparison.OrdinalIgnoreCase)
+        && item.Username.Equals(username, StringComparison.OrdinalIgnoreCase)
+        && item.Email.Equals(email, StringComparison.OrdinalIgnoreCase));
+    if (account is null
+        || !smtp.VerifyCode(
+            email, request.VerificationCode ?? "", SmtpService.PasswordResetPurpose))
+    {
+        await store.SaveAsync();
+        await Task.Delay(250);
+        return Results.BadRequest(new { error = "账号、邮箱或验证码不正确，验证码也可能已经过期。" });
+    }
+
+    account.PasswordHash = Security.Hash(request.NewPassword!);
+    account.AuthRevision = NextAuthRevision(account.AuthRevision);
+    store.State.AccountSessions.RemoveAll(item => item.AccountId == account.Id);
+    await store.AuditAsync("security", $"客户账号 {account.Username} 通过邮箱重置密码");
+    return Results.Ok(new { message = "密码已重置，旧登录授权已全部失效，请使用新密码登录。" });
 });
 
 app.MapPost("/api/auth/logout", async (HttpContext context) =>
@@ -486,6 +584,8 @@ app.MapGet("/api/customer/me", (ClaimsPrincipal principal, AccountService accoun
     {
         account.Id,
         account.Username,
+        hasEmail = !string.IsNullOrWhiteSpace(account.Email),
+        maskedEmail = MaskEmail(account.Email),
         account.TrafficQuotaBytes,
         account.TrafficUsedBytes,
         remainingBytes = account.TrafficQuotaBytes <= 0
@@ -493,6 +593,72 @@ app.MapGet("/api/customer/me", (ClaimsPrincipal principal, AccountService accoun
             : Math.Max(0, account.TrafficQuotaBytes - account.TrafficUsedBytes)
     });
 }).RequireAuthorization();
+
+app.MapPost("/api/customer/password-reset/code", async (
+    ClaimsPrincipal principal, AccountService accounts, StateStore store, SmtpService smtp) =>
+{
+    var account = accounts.Find(principal.FindFirstValue(ClaimTypes.NameIdentifier) ?? "");
+    if (account is null || !account.Role.Equals("customer", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.Unauthorized();
+    }
+    if (string.IsNullOrWhiteSpace(account.Email))
+    {
+        return Results.BadRequest(new { error = "当前账号没有绑定邮箱，请联系管理员重置密码。" });
+    }
+    if (!store.State.Smtp.EmailVerificationEnabled)
+    {
+        return Results.Json(
+            new { error = "平台尚未启用邮箱验证码服务，请联系管理员。" },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    try
+    {
+        await smtp.SendVerificationCodeAsync(
+            account.Email, account.Username, SmtpService.PasswordResetPurpose);
+        return Results.Ok(new
+        {
+            message = $"验证码已发送至 {MaskEmail(account.Email)}，{Math.Clamp(store.State.Smtp.VerificationMinutes, 1, 120)} 分钟内有效。"
+        });
+    }
+    catch (Exception exception)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+}).RequireAuthorization(policy => policy.RequireRole("customer"));
+
+app.MapPost("/api/customer/password-reset", async (
+    CustomerPasswordResetRequest request,
+    HttpContext context,
+    AccountService accounts,
+    StateStore store,
+    SmtpService smtp) =>
+{
+    var account = accounts.Find(context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "");
+    if (account is null || !account.Role.Equals("customer", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.Unauthorized();
+    }
+    if (request.NewPassword?.Length < 10)
+    {
+        return Results.BadRequest(new { error = "新密码至少需要 10 个字符。" });
+    }
+    if (string.IsNullOrWhiteSpace(account.Email)
+        || !smtp.VerifyCode(
+            account.Email, request.VerificationCode ?? "", SmtpService.PasswordResetPurpose))
+    {
+        await store.SaveAsync();
+        return Results.BadRequest(new { error = "邮箱验证码无效、已过期或尝试次数过多。" });
+    }
+
+    account.PasswordHash = Security.Hash(request.NewPassword!);
+    account.AuthRevision = NextAuthRevision(account.AuthRevision);
+    store.State.AccountSessions.RemoveAll(item => item.AccountId == account.Id);
+    await store.AuditAsync("security", $"客户账号 {account.Username} 在客户面板重置密码");
+    await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    return Results.Ok(new { message = "密码已更新，旧登录授权已全部失效，请重新登录。" });
+}).RequireAuthorization(policy => policy.RequireRole("customer"));
 
 app.MapGet("/api/traffic/statistics", async (
     string? range,
@@ -566,6 +732,7 @@ app.MapPut("/api/admin/accounts/{id}", async (
             return Results.BadRequest(new { error = "密码至少需要 8 个字符。" });
         }
         account.PasswordHash = Security.Hash(request.Password);
+        account.AuthRevision = NextAuthRevision(account.AuthRevision);
         store.State.AccountSessions.RemoveAll(item => item.AccountId == account.Id);
     }
     account.TrafficQuotaBytes = Math.Max(0, request.TrafficQuotaBytes);
@@ -1594,6 +1761,24 @@ static long ReadTrafficValue(JsonElement element, params string[] names)
 
 static long SaturatingAdd(long left, long right) =>
     right > 0 && left > long.MaxValue - right ? long.MaxValue : left + right;
+
+static int NextAuthRevision(int current) => current == int.MaxValue ? 1 : current + 1;
+
+static string MaskEmail(string email)
+{
+    if (string.IsNullOrWhiteSpace(email))
+    {
+        return "未绑定";
+    }
+    var separator = email.IndexOf('@');
+    if (separator <= 0 || separator == email.Length - 1)
+    {
+        return "***";
+    }
+    var local = email[..separator];
+    var visible = local.Length <= 2 ? 1 : 2;
+    return $"{local[..Math.Min(visible, local.Length)]}***{email[separator..]}";
+}
 
 static async Task<List<PortAllocation>> GetManagedAllocationsAsync(
     StateStore store, ServerOptions options, CancellationToken cancellationToken)

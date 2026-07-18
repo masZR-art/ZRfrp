@@ -20,6 +20,17 @@
     return Number(item?.totalBytes || 0);
   }
 
+  function flagImage(item) {
+    const code = String(item?.flagCode || "").trim().toLowerCase();
+    return /^[a-z]{2}$/.test(code)
+      ? `<img class="traffic-flag" src="/flags/${code}.png" alt="">`
+      : "";
+  }
+
+  function labelMarkup(item) {
+    return `${flagImage(item)}<span>${escapeText(item?.label)}</span>`;
+  }
+
   function prepareCanvas(canvas, height) {
     const width = Math.round(canvas.getBoundingClientRect().width || canvas.parentElement?.getBoundingClientRect().width || 0);
     if (width < 2) return null;
@@ -154,7 +165,7 @@
     });
     canvas.closest(".donut-wrap").querySelector(".donut-total strong").textContent = bytes(sum);
     legend.innerHTML = items.length
-      ? items.map((item, index) => `<div><i style="background:${colors[index % colors.length]}"></i><span title="${escapeAttribute(item.label)}">${escapeText(item.label)}</span><strong>${bytes(total(item))}</strong></div>`).join("")
+      ? items.map((item, index) => `<div><i style="background:${colors[index % colors.length]}"></i><span class="traffic-item-label" title="${escapeAttribute(item.label)}">${labelMarkup(item)}</span><strong>${bytes(total(item))}</strong></div>`).join("")
       : '<p class="chart-no-data">当前区间尚无流量</p>';
     canvas._trafficHitTest = event => {
       const rect = canvas.getBoundingClientRect();
@@ -176,7 +187,7 @@
     const maximum = Math.max(1, ...items.map(total));
     list.innerHTML = items.length ? items.map((item, index) => {
       const width = Math.max(2, total(item) / maximum * 100);
-      return `<div class="ranking-row"><div><span class="ranking-index">${index + 1}</span><strong title="${escapeAttribute(item.label)}">${escapeText(item.label)}</strong><b>${bytes(total(item))}</b></div><span class="ranking-track"><i style="width:${width}%;background:${colors[index % colors.length]}"></i></span><small>入站 ${bytes(item.trafficInBytes)} · 出站 ${bytes(item.trafficOutBytes)}</small></div>`;
+      return `<div class="ranking-row"><div><span class="ranking-index">${index + 1}</span><strong class="traffic-item-label" title="${escapeAttribute(item.label)}">${labelMarkup(item)}</strong><b>${bytes(total(item))}</b></div><span class="ranking-track"><i style="width:${width}%;background:${colors[index % colors.length]}"></i></span><small>入站 ${bytes(item.trafficInBytes)} · 出站 ${bytes(item.trafficOutBytes)}</small></div>`;
     }).join("") : '<p class="chart-no-data">当前区间尚无流量</p>';
   }
 

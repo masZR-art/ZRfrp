@@ -12,17 +12,18 @@
 <body>
   <div id="login" class="login-view hidden">
     <form id="login-form" class="login-panel">
-      <div class="brand-mark">Frp</div>
+      <div class="brand-mark"><span>Frp</span></div>
       <h1>ZRfrp Server</h1>
       <p>登录控制平台</p>
       <label>账号<input id="username" autocomplete="username" required></label>
       <label>登录密码<input id="password" type="password" autocomplete="current-password" required></label>
       <button class="primary" type="submit">进入面板</button>
       <button id="show-register" type="button">注册客户账号</button>
+      <button id="show-password-reset" type="button">忘记密码</button>
       <div id="login-error" class="error"></div>
     </form>
     <form id="register-form" class="login-panel hidden">
-      <div class="brand-mark">Frp</div>
+      <div class="brand-mark"><span>Frp</span></div>
       <h1>注册账号</h1>
       <p>注册后可登录并同步可用节点</p>
       <label>用户名<input id="register-username" autocomplete="username" minlength="3" maxlength="32" required></label>
@@ -36,11 +37,24 @@
       <button id="show-login" type="button">返回登录</button>
       <div id="register-error" class="error"></div>
     </form>
+    <form id="password-reset-form" class="login-panel hidden">
+      <div class="brand-mark"><span>Frp</span></div>
+      <h1>重置密码</h1>
+      <p>通过客户账号绑定的邮箱验证身份</p>
+      <label>用户名<input id="reset-username" autocomplete="username" minlength="3" maxlength="32" required></label>
+      <label>绑定邮箱<input id="reset-email" type="email" autocomplete="email" required></label>
+      <div class="verification-row"><label>邮箱验证码<input id="reset-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label><button id="send-reset-code" type="button">发送验证码</button></div>
+      <label>新密码<input id="reset-password" type="password" autocomplete="new-password" minlength="10" required></label>
+      <label>确认新密码<input id="reset-password-confirm" type="password" autocomplete="new-password" minlength="10" required></label>
+      <button class="primary" type="submit">确认重置</button>
+      <button id="reset-show-login" type="button">返回登录</button>
+      <div id="reset-error" class="error"></div>
+    </form>
   </div>
 
   <div id="app" class="shell hidden">
     <aside>
-      <div class="brand"><span class="brand-mark small">Frp</span><span>ZRfrp</span></div>
+      <div class="brand"><span class="brand-mark small"><span>Frp</span></span><span>ZRfrp</span></div>
       <nav>
         <button class="nav active admin-only" data-page="overview">主控总览</button>
         <button class="nav admin-only" data-page="nodes">服务节点</button>
@@ -54,7 +68,7 @@
       </nav>
       <div class="aside-foot">
         <span id="node-health" class="health"><i></i>检测中</span>
-        <button id="version-button" class="quiet">v2.2.8</button>
+        <button id="version-button" class="quiet">v2.3.0</button>
         <button id="logout" class="quiet">退出登录</button>
       </div>
     </aside>
@@ -287,6 +301,16 @@
         <section class="panel compact"><div class="panel-head"><div><h2>账号信息</h2><p>当前登录的 ZRfrp 客户账号</p></div>
           <div class="service-actions"><button id="copy-node-export">复制节点配置</button><button id="download-node-export" class="primary">下载节点配置</button></div>
         </div><div id="customer-info" class="details"></div><p id="customer-export-status" class="notice"></p></section>
+        <section class="panel compact customer-password-panel">
+          <div class="panel-head"><div><h2>重置登录密码</h2><p id="customer-email-hint">验证码将发送至账号绑定邮箱</p></div></div>
+          <form id="customer-password-form" class="form-grid">
+            <div class="verification-row"><label>邮箱验证码<input id="customer-reset-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label><button id="send-customer-reset-code" type="button">发送验证码</button></div>
+            <label>新密码<input id="customer-reset-password" type="password" autocomplete="new-password" minlength="10" required></label>
+            <label>确认新密码<input id="customer-reset-password-confirm" type="password" autocomplete="new-password" minlength="10" required></label>
+            <button class="primary" type="submit">重置密码</button>
+            <span id="customer-password-status" class="notice"></span>
+          </form>
+        </section>
       </section>
 
       <section id="page-security" class="page">

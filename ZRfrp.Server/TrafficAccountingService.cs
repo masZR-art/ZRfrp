@@ -6,11 +6,13 @@ public sealed class TrafficAccountingService
     private static readonly TimeSpan HistoryBucketSize = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan HistoryRetention = TimeSpan.FromDays(31);
     private readonly StateStore _store;
+    private readonly ServerOptions _options;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public TrafficAccountingService(StateStore store)
+    public TrafficAccountingService(StateStore store, ServerOptions options)
     {
         _store = store;
+        _options = options;
     }
 
     public async Task<long> ApplyAsync(
@@ -242,10 +244,10 @@ public sealed class TrafficAccountingService
                 _store.State.TrafficHistory.Any(bucket => bucket.Slices.Any(slice =>
                     string.IsNullOrWhiteSpace(accountId) || slice.AccountId == accountId)),
                 timeline.Select(pair => new TrafficTimelinePoint(pair.Key, pair.Value.In, pair.Value.Out)).ToArray(),
-                ToDimensions(nodes, NodeLabel, 8),
+                ToDimensions(nodes, NodeLabel, 8, NodeFlagCode),
                 string.IsNullOrWhiteSpace(accountId) ? ToDimensions(accounts, AccountLabel, 10) : [],
                 ToDimensions(protocols, key => key.ToUpperInvariant(), 8),
-                ToDimensions(tunnels, TunnelLabel, 10));
+                ToDimensions(tunnels, TunnelLabel, 10, TunnelFlagCode));
         }
         finally
         {
@@ -409,13 +411,15 @@ public sealed class TrafficAccountingService
     private IReadOnlyList<TrafficDimensionItem> ToDimensions(
         IReadOnlyDictionary<string, TrafficTotals> source,
         Func<string, string> label,
-        int limit) => source
+        int limit,
+        Func<string, string>? flagCode = null) => source
         .Select(pair => new TrafficDimensionItem(
             pair.Key,
             label(pair.Key),
             pair.Value.In,
             pair.Value.Out,
-            SaturatingAdd(pair.Value.In, pair.Value.Out)))
+            SaturatingAdd(pair.Value.In, pair.Value.Out),
+            flagCode?.Invoke(pair.Key) ?? ""))
         .OrderByDescending(item => item.TotalBytes)
         .ThenBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
         .Take(limit)
@@ -423,13 +427,30 @@ public sealed class TrafficAccountingService
 
     private string NodeLabel(string nodeId)
     {
-        if (nodeId == "local")
+        if (IsLocalNode(nodeId))
         {
             return string.IsNullOrWhiteSpace(_store.State.LocalNodeName)
-                ? "本机节点"
-                : _store.State.LocalNodeName;
+                ? string.IsNullOrWhiteSpace(_options.NodeName) ? "本机节点" : PlainNodeName(_options.NodeName)
+                : PlainNodeName(_store.State.LocalNodeName);
         }
-        return _store.State.Nodes.FirstOrDefault(item => item.Id == nodeId)?.Name ?? nodeId;
+        var node = _store.State.Nodes.FirstOrDefault(item => item.Id == nodeId);
+        return node is null || string.IsNullOrWhiteSpace(node.Name)
+            ? nodeId
+            : PlainNodeName(node.Name);
+    }
+
+    private string NodeFlagCode(string nodeId)
+    {
+        if (IsLocalNode(nodeId))
+        {
+            return NormalizeFlagCode(
+                _store.State.LocalNodeFlagCode,
+                string.IsNullOrWhiteSpace(_store.State.LocalNodeName)
+                    ? _options.NodeName
+                    : _store.State.LocalNodeName);
+        }
+        var node = _store.State.Nodes.FirstOrDefault(item => item.Id == nodeId);
+        return node is null ? "" : NormalizeFlagCode(node.FlagCode, node.Name);
     }
 
     private string AccountLabel(string accountId)
@@ -459,6 +480,53 @@ public sealed class TrafficAccountingService
         var node = NodeLabel(key[..separator]);
         var proxy = key[(separator + 1)..];
         return $"{proxy} · {node}";
+    }
+
+    private string TunnelFlagCode(string key)
+    {
+        var separator = key.IndexOf('\u001f');
+        return separator < 0 ? "" : NodeFlagCode(key[..separator]);
+    }
+
+    private bool IsLocalNode(string nodeId) =>
+        string.IsNullOrWhiteSpace(nodeId)
+        || nodeId.Equals("local", StringComparison.OrdinalIgnoreCase)
+        || (!string.IsNullOrWhiteSpace(_options.NodeId)
+            && nodeId.Equals(_options.NodeId, StringComparison.Ordinal));
+
+    private static string NormalizeFlagCode(string? flagCode, string? decoratedName)
+    {
+        var normalized = flagCode?.Trim().ToUpperInvariant() ?? "";
+        if (normalized.Length == 2 && normalized.All(character => character is >= 'A' and <= 'Z'))
+        {
+            return normalized;
+        }
+        return decoratedName?.TrimStart() switch
+        {
+            var value when value?.StartsWith("🇨🇳", StringComparison.Ordinal) == true => "CN",
+            var value when value?.StartsWith("🇯🇵", StringComparison.Ordinal) == true => "JP",
+            var value when value?.StartsWith("🇺🇸", StringComparison.Ordinal) == true => "US",
+            var value when value?.StartsWith("🇸🇬", StringComparison.Ordinal) == true => "SG",
+            var value when value?.StartsWith("🇭🇰", StringComparison.Ordinal) == true => "HK",
+            var value when value?.StartsWith("🇰🇷", StringComparison.Ordinal) == true => "KR",
+            var value when value?.StartsWith("🇩🇪", StringComparison.Ordinal) == true => "DE",
+            var value when value?.StartsWith("🇬🇧", StringComparison.Ordinal) == true => "GB",
+            var value when value?.StartsWith("🇫🇷", StringComparison.Ordinal) == true => "FR",
+            _ => ""
+        };
+    }
+
+    private static string PlainNodeName(string value)
+    {
+        var name = value.Trim();
+        foreach (var flag in new[] { "🇨🇳", "🇯🇵", "🇺🇸", "🇸🇬", "🇭🇰", "🇰🇷", "🇩🇪", "🇬🇧", "🇫🇷" })
+        {
+            if (name.StartsWith(flag, StringComparison.Ordinal))
+            {
+                return name[flag.Length..].TrimStart();
+            }
+        }
+        return name;
     }
 
     private long SumAccountHistory(string accountId, bool inbound)

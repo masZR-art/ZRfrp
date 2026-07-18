@@ -7,25 +7,37 @@ namespace ZRfrp.Server;
 
 public sealed class SmtpService
 {
+    public const string RegistrationPurpose = "registration";
+    public const string PasswordResetPurpose = "password-reset";
     private readonly StateStore _store;
 
     public SmtpService(StateStore store) => _store = store;
 
-    public async Task SendVerificationCodeAsync(string email, string recipientName)
+    public async Task SendVerificationCodeAsync(
+        string email,
+        string recipientName,
+        string purpose = RegistrationPurpose)
     {
         var settings = _store.State.Smtp;
         EnsureConfigured(settings);
         var normalizedEmail = NormalizeEmail(email);
+        purpose = NormalizePurpose(purpose);
         var now = DateTimeOffset.UtcNow;
+        _store.State.EmailVerificationChallenges.RemoveAll(item => item.ExpiresAt <= now.AddHours(-1));
         var existing = _store.State.EmailVerificationChallenges.FirstOrDefault(item =>
-            item.Email.Equals(normalizedEmail, StringComparison.OrdinalIgnoreCase));
+            item.Email.Equals(normalizedEmail, StringComparison.OrdinalIgnoreCase)
+            && item.Purpose.Equals(purpose, StringComparison.Ordinal));
         if (existing is not null && existing.LastSentAt > now.AddMinutes(-1))
         {
             throw new InvalidOperationException("验证码发送过于频繁，请一分钟后重试。");
         }
 
         var code = System.Security.Cryptography.RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
-        var challenge = existing ?? new EmailVerificationChallenge { Email = normalizedEmail };
+        var challenge = existing ?? new EmailVerificationChallenge
+        {
+            Email = normalizedEmail,
+            Purpose = purpose
+        };
         challenge.CodeHash = Security.HashToken(code);
         var verificationMinutes = Math.Clamp(settings.VerificationMinutes, 1, 120);
         challenge.ExpiresAt = now.AddMinutes(verificationMinutes);
@@ -52,11 +64,16 @@ public sealed class SmtpService
         await SendAsync(NormalizeEmail(recipientEmail), "ZRfrp SMTP 测试邮件",
             "<h2>ZRfrp SMTP 配置正常</h2><p>如果您收到此邮件，说明邮件服务器配置可用。</p>");
 
-    public bool VerifyCode(string email, string code)
+    public bool VerifyCode(
+        string email,
+        string code,
+        string purpose = RegistrationPurpose)
     {
         var normalizedEmail = NormalizeEmail(email);
+        purpose = NormalizePurpose(purpose);
         var challenge = _store.State.EmailVerificationChallenges.FirstOrDefault(item =>
-            item.Email.Equals(normalizedEmail, StringComparison.OrdinalIgnoreCase));
+            item.Email.Equals(normalizedEmail, StringComparison.OrdinalIgnoreCase)
+            && item.Purpose.Equals(purpose, StringComparison.Ordinal));
         if (challenge is null || challenge.ExpiresAt <= DateTimeOffset.UtcNow || challenge.FailedAttempts >= 5)
             return false;
         if (!Security.VerifyToken(code.Trim(), challenge.CodeHash))
@@ -73,6 +90,12 @@ public sealed class SmtpService
         try { return new MailAddress(email.Trim()).Address.ToLowerInvariant(); }
         catch { throw new InvalidOperationException("邮箱地址格式无效。"); }
     }
+
+    private static string NormalizePurpose(string purpose) => purpose switch
+    {
+        PasswordResetPurpose => PasswordResetPurpose,
+        _ => RegistrationPurpose
+    };
 
     private async Task SendAsync(string recipient, string subject, string html)
     {

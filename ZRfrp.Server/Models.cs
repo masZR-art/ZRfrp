@@ -64,6 +64,7 @@ public sealed class UserAccount
     public long TrafficUsedBytes { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public string Email { get; set; } = "";
+    public int AuthRevision { get; set; }
 }
 
 public sealed class SmtpSettings
@@ -94,6 +95,7 @@ public sealed class SmtpSettings
 public sealed class EmailVerificationChallenge
 {
     public string Email { get; set; } = "";
+    public string Purpose { get; set; } = "";
     public string CodeHash { get; set; } = "";
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset LastSentAt { get; set; }
@@ -165,6 +167,10 @@ public sealed record AuditEntry(DateTimeOffset Time, string Action, string Detai
 public sealed record LoginRequest(string Username, string Password);
 public sealed record RegistrationRequest(string Username, string Password, string Email, string VerificationCode);
 public sealed record EmailCodeRequest(string Email, string Username);
+public sealed record PasswordResetCodeRequest(string Username, string Email);
+public sealed record PasswordResetRequest(
+    string Username, string Email, string VerificationCode, string NewPassword);
+public sealed record CustomerPasswordResetRequest(string VerificationCode, string NewPassword);
 public sealed record SmtpSettingsRequest(
     bool EmailVerificationEnabled, string Host, int Port, string Username, string Password,
     string FromEmail, string FromName, bool EnableSsl, int VerificationMinutes,
@@ -254,7 +260,12 @@ public sealed class TrafficHistorySlice
 public sealed record TrafficTimelinePoint(
     DateTimeOffset Time, long TrafficInBytes, long TrafficOutBytes);
 public sealed record TrafficDimensionItem(
-    string Key, string Label, long TrafficInBytes, long TrafficOutBytes, long TotalBytes);
+    string Key,
+    string Label,
+    long TrafficInBytes,
+    long TrafficOutBytes,
+    long TotalBytes,
+    string FlagCode);
 public sealed record TrafficStatisticsResponse(
     string Range,
     DateTimeOffset From,
