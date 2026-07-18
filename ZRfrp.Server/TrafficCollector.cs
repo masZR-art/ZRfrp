@@ -106,6 +106,11 @@ public sealed class TrafficCollector : BackgroundService
             var user = ReadString(proxy, "user");
             var clientId = ReadString(proxy, "clientID", "clientId", "client_id");
             var remotePort = ReadNestedLong(proxy, "conf", "remotePort", "remote_port");
+            if (remotePort == 0)
+            {
+                var directPort = ReadLong(proxy, "remotePort", "remote_port");
+                remotePort = directPort is > 0 and <= 65535 ? (int)directPort : 0;
+            }
             var accountId = ResolveAccountId(type, name, user, clientId, remotePort);
             if (string.IsNullOrWhiteSpace(accountId))
             {
@@ -125,6 +130,31 @@ public sealed class TrafficCollector : BackgroundService
     private string ResolveAccountId(
         string type, string proxyName, string user, string clientId, int remotePort)
     {
+        var allocations = _store.State.Allocations.Where(item =>
+            item.Active
+            && !string.IsNullOrWhiteSpace(item.AccountId)
+            && item.ProxyType.Equals(type, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+        var rankedAllocations = allocations
+            .Select(item => new
+            {
+                Item = item,
+                Score = AllocationMatchScore(item, proxyName, user, clientId, remotePort)
+            })
+            .Where(match => match.Score > 0)
+            .OrderByDescending(match => match.Score)
+            .ThenByDescending(match => match.Item.UpdatedAt)
+            .ToArray();
+        var bestScore = rankedAllocations.FirstOrDefault()?.Score ?? 0;
+        var bestMatches = rankedAllocations.Where(match => match.Score == bestScore).ToArray();
+        if (bestMatches.Length == 1)
+        {
+            return bestMatches[0].Item.AccountId;
+        }
+
+        // Dashboard's user field can be stale after a desktop account switch.
+        // Treat it as a fallback only after the server-issued allocation cannot
+        // identify a single owner by globally unique port, client or proxy.
         if (!string.IsNullOrWhiteSpace(user))
         {
             var account = _store.State.Accounts.FirstOrDefault(item =>
@@ -141,26 +171,6 @@ public sealed class TrafficCollector : BackgroundService
             }
         }
 
-        var allocations = _store.State.Allocations.Where(item =>
-            item.Active
-            && !string.IsNullOrWhiteSpace(item.AccountId)
-            && item.ProxyType.Equals(type, StringComparison.OrdinalIgnoreCase)).ToArray();
-
-        var allocation = allocations
-            .Select(item => new
-            {
-                Item = item,
-                Score = AllocationMatchScore(item, proxyName, clientId, remotePort)
-            })
-            .Where(match => match.Score > 0)
-            .OrderByDescending(match => match.Score)
-            .ThenByDescending(match => match.Item.UpdatedAt)
-            .FirstOrDefault()?.Item;
-        if (allocation is not null)
-        {
-            return allocation.AccountId;
-        }
-
         if (!string.IsNullOrWhiteSpace(clientId))
         {
             var trackedClient = _store.State.Clients.FirstOrDefault(item =>
@@ -172,7 +182,7 @@ public sealed class TrafficCollector : BackgroundService
             }
         }
 
-        allocation = _store.State.Allocations.FirstOrDefault(item => item.Active
+        var allocation = _store.State.Allocations.FirstOrDefault(item => item.Active
             && !string.IsNullOrWhiteSpace(clientId)
             && item.ClientId.Equals(clientId, StringComparison.Ordinal));
         if (allocation is not null && !string.IsNullOrWhiteSpace(allocation.AccountId))
@@ -185,7 +195,7 @@ public sealed class TrafficCollector : BackgroundService
     }
 
     private static int AllocationMatchScore(
-        PortAllocation allocation, string proxyName, string clientId, int remotePort)
+        PortAllocation allocation, string proxyName, string user, string clientId, int remotePort)
     {
         var nameMatches = allocation.ProxyName.Equals(proxyName, StringComparison.Ordinal)
             || proxyName.Equals($"{allocation.AccountId}.{allocation.ProxyName}", StringComparison.Ordinal)
@@ -193,11 +203,16 @@ public sealed class TrafficCollector : BackgroundService
         var clientMatches = !string.IsNullOrWhiteSpace(clientId)
             && allocation.ClientId.Equals(clientId, StringComparison.Ordinal);
         var portMatches = remotePort > 0 && allocation.RemotePort == remotePort;
-        if (!nameMatches && !clientMatches && !portMatches)
+        var userMatches = !string.IsNullOrWhiteSpace(user)
+            && allocation.AccountId.Equals(user, StringComparison.Ordinal);
+        if (!nameMatches && !clientMatches && !portMatches && !userMatches)
         {
             return 0;
         }
-        return (nameMatches ? 4 : 0) + (clientMatches ? 3 : 0) + (portMatches ? 5 : 0);
+        return (nameMatches ? 4 : 0)
+            + (clientMatches ? 10 : 0)
+            + (portMatches ? 20 : 0)
+            + (userMatches ? 8 : 0);
     }
 
     private async Task ReportToMasterAsync(

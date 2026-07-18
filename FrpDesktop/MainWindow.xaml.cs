@@ -63,6 +63,7 @@ public partial class MainWindow : Window
     private bool _trayDisposed;
     private bool _isLoadingAppSettings;
     private bool _isApplyingProxyToggle;
+    private int _proxyEditorSuggestedRemotePort;
     private DesktopUpdateInfo? _desktopUpdate;
     private Window? _floatingPanelWindow;
     private FrameworkElement? _floatingPanelContent;
@@ -1551,7 +1552,9 @@ public partial class MainWindow : Window
         try
         {
             var editedProxy = ReadProxyFromEditor();
-            ValidateProxy(editedProxy);
+            var editorProfile = ProxyProfileComboBox.SelectedItem as FrpProfile ?? _selectedProfile
+                ?? throw new InvalidOperationException("请选择部署节点。");
+            ValidateProxy(editedProxy, editorProfile.ServerManaged);
 
             if (_isCreatingProxy)
             {
@@ -1600,6 +1603,12 @@ public partial class MainWindow : Window
             return;
         }
         ProxyRemotePortTextBox.IsReadOnly = profile.ServerManaged || _editingProxy?.RemotePortLocked == true;
+        if (_isCreatingProxy)
+        {
+            ProxyRemotePortTextBox.Text = profile.ServerManaged
+                ? "系统自动分配"
+                : Math.Max(1, _proxyEditorSuggestedRemotePort).ToString();
+        }
         ProxyRemotePortTextBox.ToolTip = ProxyRemotePortTextBox.IsReadOnly
             ? "远程端口由 ZRfrp Server 自动分配，保存后不可修改。"
             : null;
@@ -1937,11 +1946,11 @@ public partial class MainWindow : Window
 
         foreach (var proxy in enabledProxies)
         {
-            ValidateProxy(proxy);
+            ValidateProxy(proxy, profile.ServerManaged);
         }
     }
 
-    private static void ValidateProxy(FrpProxy proxy)
+    private static void ValidateProxy(FrpProxy proxy, bool remotePortManaged = false)
     {
         if (string.IsNullOrWhiteSpace(proxy.Name))
         {
@@ -1961,7 +1970,7 @@ public partial class MainWindow : Window
 
         ValidatePort(proxy.LocalPort, $"隧道“{proxy.Name}”的本地端口");
 
-        if (type is "tcp" or "udp")
+        if ((type is "tcp" or "udp") && !remotePortManaged)
         {
             ValidatePort(proxy.RemotePort, $"隧道“{proxy.Name}”的远程端口");
         }
@@ -2009,10 +2018,11 @@ public partial class MainWindow : Window
     {
         _isCreatingProxy = isNew;
         _editingProxy = isNew ? null : proxy;
+        _proxyEditorSuggestedRemotePort = proxy.RemotePort;
         ProxyEditorErrorText.Text = "";
 
         ProxyEditorTitle.Text = isNew ? "创建隧道" : "编辑隧道";
-        ProxyEditorSubtitle.Text = isNew ? "选择节点，然后填写本地和远程端口。" : "修改保存后，下次启动会使用新的配置。";
+        ProxyEditorSubtitle.Text = isNew ? "选择节点并填写本地服务信息，远程端口由托管节点自动分配。" : "修改保存后，下次启动会使用新的配置。";
         ProxyProfileComboBox.IsEnabled = isNew;
         ProxyProfileComboBox.SelectedItem = _selectedProfile;
 
@@ -2021,9 +2031,11 @@ public partial class MainWindow : Window
         SetProxyType(proxy.Type);
         ProxyLocalIPTextBox.Text = proxy.LocalIP;
         ProxyLocalPortTextBox.Text = proxy.LocalPort.ToString();
-        ProxyRemotePortTextBox.Text = proxy.RemotePort <= 0 ? "" : proxy.RemotePort.ToString();
-        ProxyCustomDomainsTextBox.Text = proxy.CustomDomains;
         var targetProfile = ProxyProfileComboBox.SelectedItem as FrpProfile ?? _selectedProfile;
+        ProxyRemotePortTextBox.Text = isNew && targetProfile?.ServerManaged == true
+            ? "系统自动分配"
+            : proxy.RemotePort <= 0 ? "" : proxy.RemotePort.ToString();
+        ProxyCustomDomainsTextBox.Text = proxy.CustomDomains;
         ProxyRemotePortTextBox.IsReadOnly = proxy.RemotePortLocked || targetProfile?.ServerManaged == true;
         ProxyRemotePortTextBox.ToolTip = ProxyRemotePortTextBox.IsReadOnly
             ? "远程端口由 ZRfrp Server 自动分配，保存后不可修改。"
@@ -2165,7 +2177,10 @@ public partial class MainWindow : Window
     {
         var type = GetSelectedProxyType();
         var localPort = ParsePort(ProxyLocalPortTextBox.Text, "本地端口");
-        var remotePort = string.IsNullOrWhiteSpace(ProxyRemotePortTextBox.Text)
+        var managedProfile = ProxyProfileComboBox.SelectedItem as FrpProfile;
+        var remotePort = managedProfile?.ServerManaged == true
+            ? 0
+            : string.IsNullOrWhiteSpace(ProxyRemotePortTextBox.Text)
             ? 0
             : ParsePort(ProxyRemotePortTextBox.Text, "远程端口");
 

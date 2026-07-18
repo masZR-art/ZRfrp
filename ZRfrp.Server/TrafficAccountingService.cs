@@ -46,6 +46,7 @@ public sealed class TrafficAccountingService
                 }
 
                 var key = SnapshotKey(nodeId, effectiveSample);
+                MigrateSnapshotBaseline(nodeId, effectiveSample, key);
                 var historyInitialized = _store.State.TrafficHistoryInitializedKeys.Contains(key)
                     || HasHistoryForSample(nodeId, effectiveSample);
                 var increment = ApplySnapshot(
@@ -257,6 +258,40 @@ public sealed class TrafficAccountingService
 
     private static string SnapshotKey(string nodeId, TrafficSample sample) =>
         $"traffic-v2:{nodeId}:{sample.AccountId}:{sample.ProxyType}:{sample.ClientId}:{sample.ProxyName}";
+
+    private void MigrateSnapshotBaseline(string nodeId, TrafficSample sample, string targetKey)
+    {
+        var prefix = $"traffic-v2:{nodeId}:";
+        var suffix = $":{sample.ProxyType}:{sample.ClientId}:{sample.ProxyName}";
+        var previousKeys = _store.State.TrafficSnapshots.Keys
+            .Where(key => key != targetKey
+                && key.StartsWith(prefix, StringComparison.Ordinal)
+                && key.EndsWith(suffix, StringComparison.Ordinal))
+            .ToArray();
+        if (previousKeys.Length == 0)
+        {
+            return;
+        }
+
+        var total = previousKeys.Max(key => _store.State.TrafficSnapshots.GetValueOrDefault(key));
+        var inbound = previousKeys.Max(key => _store.State.TrafficInSnapshots.GetValueOrDefault(key));
+        var outbound = previousKeys.Max(key => _store.State.TrafficOutSnapshots.GetValueOrDefault(key));
+        _store.State.TrafficSnapshots[targetKey] = Math.Max(
+            _store.State.TrafficSnapshots.GetValueOrDefault(targetKey), total);
+        _store.State.TrafficInSnapshots[targetKey] = Math.Max(
+            _store.State.TrafficInSnapshots.GetValueOrDefault(targetKey), inbound);
+        _store.State.TrafficOutSnapshots[targetKey] = Math.Max(
+            _store.State.TrafficOutSnapshots.GetValueOrDefault(targetKey), outbound);
+        _store.State.TrafficHistoryInitializedKeys.Add(targetKey);
+
+        foreach (var previousKey in previousKeys)
+        {
+            _store.State.TrafficSnapshots.Remove(previousKey);
+            _store.State.TrafficInSnapshots.Remove(previousKey);
+            _store.State.TrafficOutSnapshots.Remove(previousKey);
+            _store.State.TrafficHistoryInitializedKeys.Remove(previousKey);
+        }
+    }
 
     private static long ApplySnapshot(
         IDictionary<string, long> snapshots, string key, long current)
