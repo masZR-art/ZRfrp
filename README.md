@@ -13,6 +13,8 @@
   ·
   <a href="ZRfrp.Server/README.md">服务端文档</a>
   ·
+  <a href="ZRfrp.Server/ALIPAY.md">支付宝接入</a>
+  ·
   <a href="https://github.com/masZR-art/ZRfrp/tree/personal-manager">个人管理器</a>
 </p>
 

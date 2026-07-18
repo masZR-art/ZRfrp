@@ -59,16 +59,21 @@
         <button class="nav active admin-only" data-page="overview">主控总览</button>
         <button class="nav admin-only" data-page="nodes">服务节点</button>
         <button class="nav admin-only" data-page="accounts">用户账号</button>
+        <button class="nav admin-only" data-page="subscriptions">订阅管理</button>
+        <button class="nav admin-only" data-page="payments">支付设置</button>
+        <button class="nav admin-only" data-page="announcements">公告管理</button>
         <button class="nav admin-only" data-page="clients">客户端</button>
         <button class="nav admin-only" data-page="tunnels">隧道分配</button>
         <button class="nav admin-only" data-page="config">模块化配置</button>
         <button class="nav admin-only" data-page="maintenance">系统维护</button>
         <button class="nav admin-only" data-page="security">安全</button>
         <button class="nav customer-only" data-page="customer">仪表盘</button>
+        <button class="nav customer-only" data-page="customer-subscriptions">订阅中心</button>
+        <button class="nav customer-only" data-page="customer-account">账户</button>
       </nav>
       <div class="aside-foot">
         <span id="node-health" class="health"><i></i>检测中</span>
-        <button id="version-button" class="quiet">v2.3.0</button>
+        <button id="version-button" class="quiet">v2.5.0</button>
         <button id="logout" class="quiet">退出登录</button>
       </div>
     </aside>
@@ -209,7 +214,7 @@
             <div class="panel-head"><div><h2>Desktop 登录授权</h2><p>设置新登录会话保持有效的时间，已签发会话不受影响</p></div></div>
             <div class="registration-controls"><label>授权时间（小时）<input id="session-hours" type="number" min="1" max="8760"></label><button id="save-session-settings" type="button">保存授权时间</button><span id="session-status"></span></div>
           </section>
-          <div class="table-wrap"><table><thead><tr><th>账号</th><th>类型</th><th>状态</th><th>已用流量</th><th>额度</th><th>创建时间</th><th></th></tr></thead><tbody id="accounts-body"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>账号</th><th>类型</th><th>状态</th><th>已用流量</th><th>额度</th><th>订阅</th><th>创建时间</th><th></th></tr></thead><tbody id="accounts-body"></tbody></table></div>
         </section>
       </section>
 
@@ -217,6 +222,65 @@
         <section class="panel full"><div class="panel-head"><div><h2>端口租约</h2><p>由服务端统一分配并在 frps 插件层强制执行</p></div></div>
           <div class="table-wrap"><table><thead><tr><th>隧道</th><th>所属节点</th><th>客户端</th><th>类型</th><th>远程端口</th><th>带宽限制</th><th>状态</th><th></th></tr></thead><tbody id="allocations-body"></tbody></table></div>
         </section>
+      </section>
+
+      <section id="page-subscriptions" class="page">
+        <section class="panel subscription-editor">
+          <div class="panel-head"><div><h2>套餐设置</h2><p>控制周期、流量、节点、通道上限与批准方式</p></div><span class="tag">权益快照</span></div>
+          <form id="subscription-plan-form" class="config-grid subscription-form">
+            <label>套餐名称<input id="subscription-plan-name" maxlength="48" placeholder="例如 标准月付" required></label>
+            <label>套餐类型<select id="subscription-plan-kind"><option value="monthly">包月</option><option value="quarterly">包季</option><option value="yearly">包年</option><option value="traffic">流量包</option></select></label>
+            <label>包含流量（GB）<input id="subscription-plan-traffic" type="number" min="0.01" step="0.01" required></label>
+            <label>价格（元）<input id="subscription-plan-price" type="number" min="0" step="0.01" required></label>
+            <label>可用通道数<input id="subscription-plan-channels" type="number" min="0" max="10000" value="0"><small>0 表示不限</small></label>
+            <label>显示顺序<input id="subscription-plan-sort" type="number" min="-9999" max="9999" value="0"></label>
+            <label class="switch-label subscription-enabled"><input id="subscription-plan-enabled" type="checkbox" checked><span></span>立即向客户展示</label>
+            <label class="switch-label subscription-enabled"><input id="subscription-plan-auto" type="checkbox"><span></span>支付或申请后自动批准</label>
+            <fieldset class="node-entitlement wide"><legend>可用服务节点</legend><label class="node-all-option"><input id="subscription-plan-all-nodes" type="checkbox" checked>全部节点（包含未来新增节点）</label><div id="subscription-plan-nodes" class="node-choice-grid"></div></fieldset>
+            <div class="editor-actions wide"><span id="subscription-plan-status">付费套餐在支付宝入账后按设置批准，免费套餐提交后按设置批准。</span><button class="primary" type="submit">创建套餐</button></div>
+          </form>
+        </section>
+        <section class="panel subscription-admin-section">
+          <div class="panel-head"><div><h2>现有套餐</h2><p>可直接修改套餐；已提交订单会保留提交时的套餐快照</p></div></div>
+          <div id="subscription-plans-body" class="plan-admin-grid"></div>
+        </section>
+        <section class="panel subscription-admin-section">
+          <div class="panel-head"><div><h2>订阅申请</h2><p>付费订单先验签入账；手动批准后权益立即生效</p></div><button id="refresh-subscriptions" type="button">刷新申请</button></div>
+          <div class="table-wrap"><table><thead><tr><th>客户</th><th>套餐</th><th>套餐权益</th><th>价格</th><th>支付</th><th>提交时间</th><th>状态</th><th></th></tr></thead><tbody id="subscription-orders-body"></tbody></table></div>
+        </section>
+      </section>
+
+      <section id="page-payments" class="page">
+        <section class="panel payment-settings-panel">
+          <div class="panel-head"><div><h2>支付宝 API 支付</h2><p>支持电脑网站支付与手机网站支付，到账以 RSA2 异步通知验签为准</p></div><span id="payment-health" class="tag off">未配置</span></div>
+          <form id="payment-settings-form" class="config-grid payment-form">
+            <label class="switch-label wide"><input id="alipay-enabled" type="checkbox"><span></span>启用支付宝支付</label>
+            <label>运行环境<select id="alipay-gateway"><option value="https://openapi.alipay.com/gateway.do">正式环境</option><option value="https://openapi-sandbox.dl.alipaydev.com/gateway.do">沙箱环境</option></select></label>
+            <label>支付宝应用 AppID<input id="alipay-app-id" autocomplete="off" placeholder="例如 202100..." /></label>
+            <label>商户 PID / Seller ID（可选）<input id="alipay-seller-id" autocomplete="off" placeholder="用于进一步校验通知商户" /></label>
+            <label class="wide">面板公网 HTTPS 地址<input id="alipay-public-url" type="url" placeholder="https://panel.example.com" /></label>
+            <label class="wide">应用私钥<textarea id="alipay-private-key" class="key-input" spellcheck="false" placeholder="留空保存时保留已配置私钥"></textarea></label>
+            <label class="wide">支付宝公钥<textarea id="alipay-public-key" class="key-input" spellcheck="false" placeholder="请粘贴支付宝公钥，不是应用公钥"></textarea></label>
+            <div class="callback-box wide"><div><span>异步通知地址</span><code id="alipay-notify-url">保存公网地址后生成</code></div><button id="copy-alipay-notify" type="button">复制</button></div>
+            <div class="callback-box wide"><div><span>同步返回地址</span><code id="alipay-return-url">保存公网地址后生成</code></div><button id="copy-alipay-return" type="button">复制</button></div>
+            <div class="editor-actions wide"><span id="payment-status">密钥仅保存在服务端数据目录中，不会返回浏览器。</span><button class="primary" type="submit">保存支付设置</button></div>
+          </form>
+        </section>
+      </section>
+
+      <section id="page-announcements" class="page">
+        <section class="panel announcement-editor">
+          <div class="panel-head"><div><h2>发布公告</h2><p>生效中的公告会在客户登录网页后以主题弹窗依次展示</p></div><span class="tag">客户推送</span></div>
+          <form id="announcement-form" class="config-grid announcement-form">
+            <label class="wide">公告标题<input id="announcement-title" maxlength="80" required placeholder="例如 节点维护通知"></label>
+            <label>开始展示<input id="announcement-published" type="datetime-local" required></label>
+            <label>停止展示（可选）<input id="announcement-expires" type="datetime-local"></label>
+            <label class="switch-label wide"><input id="announcement-enabled" type="checkbox" checked><span></span>立即启用</label>
+            <label class="wide">公告正文<textarea id="announcement-content" class="announcement-content" maxlength="4000" required placeholder="请输入要推送给客户的内容"></textarea></label>
+            <div class="editor-actions wide"><span id="announcement-status">客户确认后，本浏览器不会重复展示同一版本公告。</span><button class="primary" type="submit">发布公告</button></div>
+          </form>
+        </section>
+        <section class="panel announcement-list-panel"><div class="panel-head"><div><h2>公告记录</h2><p>修改公告会作为新版本再次提醒客户</p></div><button id="refresh-announcements" type="button">刷新</button></div><div id="announcement-list" class="announcement-list"></div></section>
       </section>
 
       <section id="page-config" class="page">
@@ -298,7 +362,24 @@
             </section>
           </div>
         </section>
-        <section class="panel compact"><div class="panel-head"><div><h2>账号信息</h2><p>当前登录的 ZRfrp 客户账号</p></div>
+      </section>
+
+      <section id="page-customer-subscriptions" class="page">
+        <section class="subscription-summary" id="customer-subscription-summary">
+          <div><span>当前权益</span><strong>读取中</strong><small>套餐审核通过后自动生效</small></div>
+          <div><span>有效期</span><strong>读取中</strong><small>流量包不会改变有效期</small></div>
+          <div><span>待审核</span><strong>0</strong><small>管理员确认后到账</small></div>
+        </section>
+        <div class="traffic-section-head subscription-catalog-head"><div><h2>选择套餐</h2><p>选择适合的时长或追加流量，提交后等待管理员审核</p></div><span id="customer-subscription-status" class="notice"></span></div>
+        <div id="customer-subscription-plans" class="subscription-plan-grid"></div>
+        <section class="panel subscription-history">
+          <div class="panel-head"><div><h2>申请记录</h2><p>套餐价格与流量以提交时记录为准</p></div></div>
+          <div class="table-wrap"><table><thead><tr><th>套餐</th><th>类型</th><th>流量</th><th>价格</th><th>提交时间</th><th>状态</th><th>审核说明</th></tr></thead><tbody id="customer-subscription-orders-body"></tbody></table></div>
+        </section>
+      </section>
+
+      <section id="page-customer-account" class="page">
+        <section class="panel compact customer-account-panel"><div class="panel-head"><div><h2>账号信息</h2><p>当前登录的 ZRfrp 客户账号</p></div>
           <div class="service-actions"><button id="copy-node-export">复制节点配置</button><button id="download-node-export" class="primary">下载节点配置</button></div>
         </div><div id="customer-info" class="details"></div><p id="customer-export-status" class="notice"></p></section>
         <section class="panel compact customer-password-panel">
@@ -365,6 +446,29 @@
       <h2 id="confirm-title">确认操作</h2>
       <p id="confirm-message"></p>
       <div class="dialog-actions"><button id="confirm-cancel" type="button">取消</button><button id="confirm-accept" class="danger" type="button">确认删除</button></div>
+    </section>
+  </div>
+  <div id="account-subscription-dialog" class="dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="account-subscription-title">
+    <section class="entitlement-dialog">
+      <div class="panel-head"><div><h2 id="account-subscription-title">编辑账户订阅</h2><p id="account-subscription-account">直接覆盖当前账号权益</p></div><button id="account-subscription-close" class="dialog-close" type="button" aria-label="关闭">×</button></div>
+      <form id="account-subscription-form" class="form-grid">
+        <input id="account-subscription-id" type="hidden">
+        <label>权益名称<input id="account-subscription-name" maxlength="48" placeholder="例如 专属套餐"></label>
+        <label>有效期<input id="account-subscription-expiry" type="datetime-local"><small>留空表示长期有效</small></label>
+        <label>流量额度（GB）<input id="account-subscription-quota" type="number" min="0" step="0.01"><small>0 表示不限</small></label>
+        <label>可用通道数<input id="account-subscription-channels" type="number" min="0" max="10000"><small>0 表示不限</small></label>
+        <fieldset class="node-entitlement"><legend>可用服务节点</legend><label class="node-all-option"><input id="account-subscription-all-nodes" type="checkbox">全部节点（包含未来新增节点）</label><div id="account-subscription-nodes" class="node-choice-grid"></div></fieldset>
+        <div class="dialog-actions"><button id="account-subscription-cancel" type="button">取消</button><button class="primary" type="submit">保存权益</button></div>
+      </form>
+    </section>
+  </div>
+  <div id="announcement-dialog" class="dialog-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="customer-announcement-title">
+    <section class="customer-announcement-dialog">
+      <div class="announcement-kicker">平台公告</div>
+      <h2 id="customer-announcement-title"></h2>
+      <p id="customer-announcement-content"></p>
+      <time id="customer-announcement-time"></time>
+      <div class="dialog-actions"><button id="announcement-later" type="button">稍后提醒</button><button id="announcement-read" class="primary" type="button">知道了</button></div>
     </section>
   </div>
   <div id="toast"></div>

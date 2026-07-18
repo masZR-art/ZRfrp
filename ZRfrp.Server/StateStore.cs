@@ -51,12 +51,38 @@ public sealed class StateStore
 
         try
         {
-            return JsonSerializer.Deserialize<ServerState>(File.ReadAllText(_path), _json) ?? new();
+            return Normalize(JsonSerializer.Deserialize<ServerState>(File.ReadAllText(_path), _json) ?? new());
         }
         catch
         {
             File.Copy(_path, _path + $".broken-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}", true);
             return new ServerState();
         }
+    }
+
+    private static ServerState Normalize(ServerState state)
+    {
+        state.Allocations ??= [];
+        state.Audit ??= [];
+        state.Accounts ??= [];
+        state.AccountSessions ??= [];
+        state.SubscriptionPlans ??= [];
+        state.SubscriptionOrders ??= [];
+        state.Alipay ??= new();
+        state.Announcements ??= [];
+        state.Nodes ??= [];
+        state.RevokedNodeIds ??= [];
+        state.Clients ??= [];
+        state.TrafficSnapshots ??= [];
+        state.TrafficInSnapshots ??= [];
+        state.TrafficOutSnapshots ??= [];
+        state.TrafficHistory ??= [];
+        state.TrafficHistoryInitializedKeys ??= [];
+        state.Smtp ??= new();
+        state.EmailVerificationChallenges ??= [];
+        foreach (var account in state.Accounts) account.AllowedNodeIds ??= [];
+        foreach (var plan in state.SubscriptionPlans) plan.AllowedNodeIds ??= [];
+        foreach (var order in state.SubscriptionOrders) order.AllowedNodeIds ??= [];
+        return state;
     }
 }

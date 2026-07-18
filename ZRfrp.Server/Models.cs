@@ -36,6 +36,10 @@ public sealed class ServerState
     public List<AuditEntry> Audit { get; set; } = [];
     public List<UserAccount> Accounts { get; set; } = [];
     public List<AccountSession> AccountSessions { get; set; } = [];
+    public List<SubscriptionPlan> SubscriptionPlans { get; set; } = [];
+    public List<SubscriptionOrder> SubscriptionOrders { get; set; } = [];
+    public AlipaySettings Alipay { get; set; } = new();
+    public List<Announcement> Announcements { get; set; } = [];
     public List<ManagedNode> Nodes { get; set; } = [];
     public List<string> RevokedNodeIds { get; set; } = [];
     public List<ManagedClient> Clients { get; set; } = [];
@@ -65,6 +69,77 @@ public sealed class UserAccount
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public string Email { get; set; } = "";
     public int AuthRevision { get; set; }
+    public DateTimeOffset? SubscriptionExpiresAt { get; set; }
+    public string ActiveSubscriptionName { get; set; } = "";
+    public List<string> AllowedNodeIds { get; set; } = [];
+    public int MaxChannels { get; set; }
+}
+
+public sealed class SubscriptionPlan
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Name { get; set; } = "";
+    public string Kind { get; set; } = "monthly";
+    public long TrafficBytes { get; set; }
+    public long PriceCents { get; set; }
+    public string Currency { get; set; } = "CNY";
+    public bool Enabled { get; set; } = true;
+    public int SortOrder { get; set; }
+    public List<string> AllowedNodeIds { get; set; } = [];
+    public int MaxChannels { get; set; }
+    public bool AutoApprove { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class SubscriptionOrder
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string AccountId { get; set; } = "";
+    public string Username { get; set; } = "";
+    public string PlanId { get; set; } = "";
+    public string PlanName { get; set; } = "";
+    public string Kind { get; set; } = "monthly";
+    public long TrafficBytes { get; set; }
+    public long PriceCents { get; set; }
+    public string Currency { get; set; } = "CNY";
+    public string Status { get; set; } = "pending";
+    public string ReviewNote { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? ReviewedAt { get; set; }
+    public string ReviewedBy { get; set; } = "";
+    public DateTimeOffset? AppliedExpiresAt { get; set; }
+    public List<string> AllowedNodeIds { get; set; } = [];
+    public int MaxChannels { get; set; }
+    public bool AutoApprove { get; set; }
+    public string PaymentProvider { get; set; } = "";
+    public string PaymentStatus { get; set; } = "not_required";
+    public string OutTradeNo { get; set; } = "";
+    public string TransactionId { get; set; } = "";
+    public DateTimeOffset? PaidAt { get; set; }
+}
+
+public sealed class AlipaySettings
+{
+    public bool Enabled { get; set; }
+    public string AppId { get; set; } = "";
+    public string SellerId { get; set; } = "";
+    public string MerchantPrivateKey { get; set; } = "";
+    public string AlipayPublicKey { get; set; } = "";
+    public string Gateway { get; set; } = "https://openapi.alipay.com/gateway.do";
+    public string PublicBaseUrl { get; set; } = "";
+}
+
+public sealed class Announcement
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Title { get; set; } = "";
+    public string Content { get; set; } = "";
+    public bool Enabled { get; set; } = true;
+    public DateTimeOffset PublishedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? ExpiresAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 public sealed class SmtpSettings
@@ -180,6 +255,20 @@ public sealed record PasswordChangeRequest(string CurrentPassword, string NewPas
 public sealed record AccountRequest(string Username, string Password, string Role, long TrafficQuotaBytes, bool Enabled);
 public sealed record RegistrationSettingsRequest(bool Enabled, long DefaultTrafficQuotaBytes);
 public sealed record SessionSettingsRequest(int SessionHours);
+public sealed record SubscriptionPlanRequest(
+    string Name, string Kind, long TrafficBytes, long PriceCents, bool Enabled, int SortOrder,
+    IReadOnlyList<string>? AllowedNodeIds, int MaxChannels, bool AutoApprove);
+public sealed record SubscriptionOrderRequest(string PlanId);
+public sealed record SubscriptionOrderReviewRequest(bool Approved, string Note);
+public sealed record AccountSubscriptionRequest(
+    string Name, DateTimeOffset? ExpiresAt, long TrafficQuotaBytes,
+    IReadOnlyList<string>? AllowedNodeIds, int MaxChannels);
+public sealed record AlipaySettingsRequest(
+    bool Enabled, string AppId, string SellerId, string MerchantPrivateKey,
+    string AlipayPublicKey, string Gateway, string PublicBaseUrl);
+public sealed record AnnouncementRequest(
+    string Title, string Content, bool Enabled,
+    DateTimeOffset PublishedAt, DateTimeOffset? ExpiresAt);
 public sealed record NodeEnrollmentRequest(
     string Name, string PublicHost, string MasterUrl, string? FlagCode, string? Architecture);
 public sealed record NodeEnrollmentResponse(

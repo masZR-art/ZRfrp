@@ -27,6 +27,9 @@ builder.Services.AddSingleton<StateStore>();
 builder.Services.AddSingleton<FrpsManager>();
 builder.Services.AddSingleton<AllocationService>();
 builder.Services.AddSingleton<AccountService>();
+builder.Services.AddSingleton<SubscriptionService>();
+builder.Services.AddSingleton<AlipayPaymentService>();
+builder.Services.AddSingleton<AnnouncementService>();
 builder.Services.AddSingleton<AccountResolver>();
 builder.Services.AddSingleton<TrafficAccountingService>();
 builder.Services.AddSingleton<FrpsConfigService>();
@@ -556,6 +559,10 @@ app.MapPost("/api/client/login", async (
     {
         return Results.Json(new { error = "该账号流量额度已用尽。" }, statusCode: 403);
     }
+    if (accounts.IsSubscriptionExpired(account))
+    {
+        return Results.Json(new { error = "该账号订阅已到期，请先在客户面板续订。" }, statusCode: 403);
+    }
     var session = await accounts.CreateSessionAsync(account);
     return Results.Ok(new ClientLoginResponse(
         account.Id, account.Username, session.Token, session.ExpiresAt,
@@ -568,13 +575,16 @@ app.MapPost("/api/client/login", async (
 app.MapGet("/api/customer/nodes/export", (
     HttpContext context, AccountService accounts, StateStore store, ServerOptions serverOptions) =>
 {
-    if (GetBearerAccount(context, accounts) is null
-        && context.User.Identity?.IsAuthenticated != true)
+    var account = GetBearerAccount(context, accounts)
+        ?? accounts.Find(context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "");
+    if (account is null)
     {
         return Results.Json(new { error = "登录会话已失效，请重新登录。" }, statusCode: 401);
     }
 
-    return Results.Ok(CreateNodeExport(store, serverOptions, context));
+    return Results.Ok(CreateNodeExport(
+        store, serverOptions, context,
+        account.Role.Equals("customer", StringComparison.OrdinalIgnoreCase) ? account : null));
 });
 
 app.MapGet("/api/customer/me", (ClaimsPrincipal principal, AccountService accounts) =>
@@ -590,9 +600,160 @@ app.MapGet("/api/customer/me", (ClaimsPrincipal principal, AccountService accoun
         account.TrafficUsedBytes,
         remainingBytes = account.TrafficQuotaBytes <= 0
             ? -1
-            : Math.Max(0, account.TrafficQuotaBytes - account.TrafficUsedBytes)
+            : Math.Max(0, account.TrafficQuotaBytes - account.TrafficUsedBytes),
+        account.SubscriptionExpiresAt,
+        account.ActiveSubscriptionName,
+        account.AllowedNodeIds,
+        account.MaxChannels,
+        subscriptionExpired = accounts.IsSubscriptionExpired(account)
     });
 }).RequireAuthorization();
+
+app.MapGet("/api/customer/announcements", (AnnouncementService announcements) =>
+    Results.Ok(announcements.ActiveAnnouncements(DateTimeOffset.UtcNow).Select(item => new
+    {
+        item.Id,
+        item.Title,
+        item.Content,
+        item.PublishedAt,
+        item.ExpiresAt,
+        item.UpdatedAt
+    }))).RequireAuthorization(policy => policy.RequireRole("customer"));
+
+app.MapGet("/api/customer/subscriptions", (
+    ClaimsPrincipal principal, AccountService accounts, StateStore store,
+    SubscriptionService subscriptions) =>
+{
+    var account = accounts.Find(principal.FindFirstValue(ClaimTypes.NameIdentifier) ?? "");
+    if (account is null || !account.Role.Equals("customer", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.Unauthorized();
+    }
+
+    var plans = store.State.SubscriptionPlans
+        .Where(item => item.Enabled)
+        .OrderBy(item => item.SortOrder)
+        .ThenBy(item => item.PriceCents)
+        .ThenBy(item => item.Name)
+        .Select(item => new
+        {
+            item.Id, item.Name, item.Kind, item.TrafficBytes, item.PriceCents,
+            item.Currency, item.SortOrder, item.AllowedNodeIds,
+            item.MaxChannels, item.AutoApprove
+        });
+    var orders = store.State.SubscriptionOrders
+        .Where(item => item.AccountId == account.Id)
+        .OrderByDescending(item => item.CreatedAt)
+        .Select(item => new
+        {
+            item.Id, item.PlanId, item.PlanName, item.Kind, item.TrafficBytes,
+            item.PriceCents, item.Currency, item.Status, item.ReviewNote,
+            item.CreatedAt, item.ReviewedAt, item.AppliedExpiresAt,
+            item.AllowedNodeIds, item.MaxChannels, item.AutoApprove,
+            item.PaymentProvider, item.PaymentStatus, item.OutTradeNo, item.PaidAt
+        });
+    return Results.Ok(new
+    {
+        account = new
+        {
+            account.TrafficQuotaBytes,
+            account.TrafficUsedBytes,
+            account.SubscriptionExpiresAt,
+            account.ActiveSubscriptionName,
+            account.AllowedNodeIds,
+            account.MaxChannels,
+            subscriptionExpired = accounts.IsSubscriptionExpired(account)
+        },
+        nodes = subscriptions.AvailableNodes().Select(node => new { node.Id, node.Name }),
+        paymentConfigured = AlipayPaymentService.IsConfigured(store.State.Alipay),
+        plans,
+        orders
+    });
+}).RequireAuthorization(policy => policy.RequireRole("customer"));
+
+app.MapPost("/api/customer/subscriptions/orders", async (
+    SubscriptionOrderRequest request,
+    ClaimsPrincipal principal,
+    AccountService accounts,
+    SubscriptionService subscriptions) =>
+{
+    var account = accounts.Find(principal.FindFirstValue(ClaimTypes.NameIdentifier) ?? "");
+    if (account is null || !account.Role.Equals("customer", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.Unauthorized();
+    }
+    var result = await subscriptions.SubmitOrderAsync(account, request.PlanId ?? "");
+    if (result.Order is null) return Results.BadRequest(new { error = result.Error });
+    var order = result.Order;
+    var message = order.Status switch
+    {
+        SubscriptionService.PendingPayment => "订单已创建，请前往支付宝完成支付。",
+        SubscriptionService.Approved => "订阅已自动批准并生效。",
+        _ => "订阅申请已提交，等待管理员审核。"
+    };
+    return Results.Ok(new
+    {
+        order.Id,
+        order.Status,
+        requiresPayment = order.Status == SubscriptionService.PendingPayment,
+        paymentUrl = order.Status == SubscriptionService.PendingPayment
+            ? $"/api/customer/subscriptions/orders/{order.Id}/pay"
+            : "",
+        message
+    });
+}).RequireAuthorization(policy => policy.RequireRole("customer"));
+
+app.MapGet("/api/customer/subscriptions/orders/{id}/pay", (
+    string id,
+    ClaimsPrincipal principal,
+    AccountService accounts,
+    StateStore store,
+    AlipayPaymentService payments,
+    HttpContext context) =>
+{
+    var account = accounts.Find(principal.FindFirstValue(ClaimTypes.NameIdentifier) ?? "");
+    if (account is null || !account.Role.Equals("customer", StringComparison.OrdinalIgnoreCase))
+        return Results.Unauthorized();
+    var order = store.State.SubscriptionOrders.FirstOrDefault(item =>
+        item.Id == id && item.AccountId == account.Id);
+    if (order is null) return Results.NotFound();
+    try
+    {
+        var userAgent = context.Request.Headers.UserAgent.ToString();
+        var mobile = Regex.IsMatch(userAgent, "Android|iPhone|iPad|Mobile", RegexOptions.IgnoreCase);
+        return Results.Content(payments.BuildPaymentHtml(order, mobile), "text/html", Encoding.UTF8);
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.BadRequest(new { error = exception.Message });
+    }
+}).RequireAuthorization(policy => policy.RequireRole("customer"));
+
+app.MapPost("/api/payments/alipay/notify", async (
+    HttpContext context, AlipayPaymentService payments) =>
+{
+    try
+    {
+        var form = await context.Request.ReadFormAsync(context.RequestAborted);
+        var values = form.ToDictionary(item => item.Key, item => item.Value.ToString(), StringComparer.Ordinal);
+        var result = await payments.HandleNotificationAsync(values);
+        return Results.Text(result.Success ? "success" : "failure", "text/plain", Encoding.UTF8);
+    }
+    catch
+    {
+        return Results.Text("failure", "text/plain", Encoding.UTF8);
+    }
+});
+
+app.MapGet("/api/payments/alipay/return", (
+    HttpContext context, AlipayPaymentService payments) =>
+{
+    var values = context.Request.Query.ToDictionary(
+        item => item.Key, item => item.Value.ToString(), StringComparer.Ordinal);
+    return Results.Redirect(payments.VerifyReturn(values)
+        ? "/?payment=processing"
+        : "/?payment=invalid");
+});
 
 app.MapPost("/api/customer/password-reset/code", async (
     ClaimsPrincipal principal, AccountService accounts, StateStore store, SmtpService smtp) =>
@@ -690,8 +851,148 @@ app.MapGet("/api/admin/accounts", (StateStore store) =>
         account.Enabled,
         account.TrafficQuotaBytes,
         account.TrafficUsedBytes,
-        account.CreatedAt
+        account.CreatedAt,
+        account.SubscriptionExpiresAt,
+        account.ActiveSubscriptionName,
+        account.AllowedNodeIds,
+        account.MaxChannels
     }))).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapGet("/api/admin/subscriptions", (
+    StateStore store, SubscriptionService subscriptions) =>
+{
+    var plans = store.State.SubscriptionPlans
+        .OrderBy(item => item.SortOrder)
+        .ThenBy(item => item.Name)
+        .ToArray();
+    var orders = store.State.SubscriptionOrders
+        .OrderBy(item => item.Status is SubscriptionService.Pending or SubscriptionService.Paid ? 0
+            : item.Status == SubscriptionService.PendingPayment ? 1 : 2)
+        .ThenByDescending(item => item.CreatedAt)
+        .ToArray();
+    var nodes = subscriptions.AvailableNodes().Select(node => new { node.Id, node.Name });
+    return Results.Ok(new { plans, orders, nodes });
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapPost("/api/admin/subscriptions/plans", async (
+    SubscriptionPlanRequest request, SubscriptionService subscriptions) =>
+{
+    var result = await subscriptions.CreatePlanAsync(request);
+    return result.Plan is not null
+        ? Results.Ok(new { result.Plan.Id, message = "订阅方案已创建。" })
+        : Results.BadRequest(new { error = result.Error });
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapPut("/api/admin/subscriptions/plans/{id}", async (
+    string id, SubscriptionPlanRequest request, SubscriptionService subscriptions) =>
+{
+    var result = await subscriptions.UpdatePlanAsync(id, request);
+    return result.Plan is not null
+        ? Results.Ok(new { message = "订阅方案已保存。" })
+        : Results.BadRequest(new { error = result.Error });
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapDelete("/api/admin/subscriptions/plans/{id}", async (
+    string id, SubscriptionService subscriptions) =>
+{
+    var error = await subscriptions.DeletePlanAsync(id);
+    return error is null
+        ? Results.Ok(new { message = "订阅方案已删除。" })
+        : Results.BadRequest(new { error });
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapPost("/api/admin/subscriptions/orders/{id}/review", async (
+    string id,
+    SubscriptionOrderReviewRequest request,
+    ClaimsPrincipal principal,
+    SubscriptionService subscriptions) =>
+{
+    if ((request.Note ?? "").Length > 240)
+    {
+        return Results.BadRequest(new { error = "审核备注不能超过 240 个字符。" });
+    }
+    var reviewer = principal.FindFirstValue(ClaimTypes.Name) ?? "admin";
+    var result = await subscriptions.ReviewOrderAsync(
+        id, request.Approved, reviewer, request.Note);
+    return result.Order is not null
+        ? Results.Ok(new { message = request.Approved ? "申请已批准并生效。" : "申请已拒绝。" })
+        : Results.BadRequest(new { error = result.Error });
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapPut("/api/admin/accounts/{id}/subscription", async (
+    string id,
+    AccountSubscriptionRequest request,
+    ClaimsPrincipal principal,
+    StateStore store,
+    SubscriptionService subscriptions) =>
+{
+    var account = store.State.Accounts.FirstOrDefault(item => item.Id == id);
+    if (account is null) return Results.NotFound();
+    if (!account.Role.Equals("customer", StringComparison.OrdinalIgnoreCase))
+        return Results.BadRequest(new { error = "管理员账号不使用客户订阅权益。" });
+    var reviewer = principal.FindFirstValue(ClaimTypes.Name) ?? "admin";
+    var error = await subscriptions.UpdateAccountSubscriptionAsync(account, request, reviewer);
+    return error is null
+        ? Results.Ok(new { message = "账户订阅权益已更新。" })
+        : Results.BadRequest(new { error });
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapGet("/api/admin/payment-settings", (StateStore store) =>
+{
+    var settings = store.State.Alipay ?? new();
+    var baseUrl = settings.PublicBaseUrl.TrimEnd('/');
+    return Results.Ok(new
+    {
+        settings.Enabled,
+        settings.AppId,
+        settings.SellerId,
+        hasPrivateKey = !string.IsNullOrWhiteSpace(settings.MerchantPrivateKey),
+        settings.AlipayPublicKey,
+        settings.Gateway,
+        settings.PublicBaseUrl,
+        configured = AlipayPaymentService.IsConfigured(settings),
+        notifyUrl = string.IsNullOrWhiteSpace(baseUrl) ? "" : baseUrl + "/api/payments/alipay/notify",
+        returnUrl = string.IsNullOrWhiteSpace(baseUrl) ? "" : baseUrl + "/api/payments/alipay/return"
+    });
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapPut("/api/admin/payment-settings", async (
+    AlipaySettingsRequest request, AlipayPaymentService payments) =>
+{
+    var error = await payments.SaveSettingsAsync(request);
+    return error is null
+        ? Results.Ok(new { message = "支付宝支付配置已保存。" })
+        : Results.BadRequest(new { error });
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapGet("/api/admin/announcements", (StateStore store) =>
+    Results.Ok(store.State.Announcements
+        .OrderByDescending(item => item.PublishedAt)
+        .ToArray())).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapPost("/api/admin/announcements", async (
+    AnnouncementRequest request, AnnouncementService announcements) =>
+{
+    var result = await announcements.CreateAsync(request);
+    return result.Announcement is not null
+        ? Results.Ok(new { result.Announcement.Id, message = "公告已创建。" })
+        : Results.BadRequest(new { error = result.Error });
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapPut("/api/admin/announcements/{id}", async (
+    string id, AnnouncementRequest request, AnnouncementService announcements) =>
+{
+    var result = await announcements.UpdateAsync(id, request);
+    return result.Announcement is not null
+        ? Results.Ok(new { message = "公告已保存。" })
+        : Results.BadRequest(new { error = result.Error });
+}).RequireAuthorization(policy => policy.RequireRole("admin"));
+
+app.MapDelete("/api/admin/announcements/{id}", async (
+    string id, AnnouncementService announcements) =>
+    await announcements.DeleteAsync(id)
+        ? Results.Ok(new { message = "公告已删除。" })
+        : Results.NotFound()).RequireAuthorization(policy => policy.RequireRole("admin"));
 
 app.MapPost("/api/admin/accounts", async (AccountRequest request, StateStore store) =>
 {
@@ -762,6 +1063,7 @@ app.MapDelete("/api/admin/accounts/{id}", async (
     store.State.AccountSessions.RemoveAll(item => item.AccountId == account.Id);
     store.State.Clients.RemoveAll(item => item.AccountId == account.Id);
     store.State.Allocations.RemoveAll(item => item.AccountId == account.Id);
+    store.State.SubscriptionOrders.RemoveAll(item => item.AccountId == account.Id);
     await store.AuditAsync("account", $"删除客户账号 {account.Username}");
     return Results.Ok(new { message = $"客户账号 {account.Username} 已删除。" });
 }).RequireAuthorization(policy => policy.RequireRole("admin"));
@@ -1302,6 +1604,7 @@ app.MapPost("/api/client/allocate", async (
     HttpContext context,
     AllocationService allocations,
     AccountService accounts,
+    SubscriptionService subscriptions,
     AccountResolver accountResolver,
     StateStore store,
     ServerOptions serverOptions,
@@ -1319,6 +1622,26 @@ app.MapPost("/api/client/allocate", async (
     var requestedNodeId = string.IsNullOrWhiteSpace(request.NodeId)
         ? LocalNodeId(serverOptions)
         : request.NodeId.Trim();
+    if (account is not null && !subscriptions.IsNodeAllowed(account, requestedNodeId))
+    {
+        return Results.Json(new { error = "当前订阅不包含所选服务节点。" }, statusCode: 403);
+    }
+    if (account is not null && account.MaxChannels > 0)
+    {
+        var managed = await GetManagedAllocationsAsync(store, serverOptions, cancellationToken);
+        var activeKeys = managed
+            .Where(item => item.Active && item.AccountId == account.Id)
+            .Select(item => $"{item.ClientId}\u001f{item.TunnelId}")
+            .ToHashSet(StringComparer.Ordinal);
+        var requestedKey = $"{request.ClientId}\u001f{request.TunnelId}";
+        if (!activeKeys.Contains(requestedKey) && activeKeys.Count >= account.MaxChannels)
+        {
+            return Results.Json(new
+            {
+                error = $"当前订阅最多允许 {account.MaxChannels} 个通道，请先关闭其他通道。"
+            }, statusCode: 403);
+        }
+    }
     if (requestedNodeId.Equals(LocalNodeId(serverOptions), StringComparison.Ordinal))
     {
         var result = await allocations.AllocateAsync(
@@ -1696,24 +2019,32 @@ static bool ValidatePeerKey(HttpContext context, string expected)
         && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(left, right);
 }
 
-static NodeExportDocument CreateNodeExport(StateStore store, ServerOptions options, HttpContext context)
+static NodeExportDocument CreateNodeExport(
+    StateStore store, ServerOptions options, HttpContext context, UserAccount? account = null)
 {
     var platformUrl = ExternalBaseUrl(context, options);
     var cutoff = DateTimeOffset.UtcNow.AddSeconds(-45);
-    var nodes = new List<NodeExportEntry>
+    var allowedNodeIds = account?.AllowedNodeIds ?? [];
+    bool IsAllowed(string nodeId) => account is null
+        || allowedNodeIds.Count == 0
+        || allowedNodeIds.Contains(nodeId, StringComparer.Ordinal);
+    var localNodeId = string.IsNullOrWhiteSpace(options.NodeId) ? "local" : options.NodeId;
+    var nodes = new List<NodeExportEntry>();
+    if (IsAllowed(localNodeId))
     {
-        new(
-            string.IsNullOrWhiteSpace(options.NodeId) ? "local" : options.NodeId,
+        nodes.Add(new NodeExportEntry(
+            localNodeId,
             DecoratedNodeName(LocalNodeName(store, options), LocalNodeFlagCode(store, options)),
             PublicFrpsHost(options),
             options.FrpsBindPort,
             options.FrpAuthToken,
-            platformUrl)
-    };
+            platformUrl));
+    }
 
     nodes.AddRange(store.State.Nodes
         .Where(node => node.Online && node.FrpsOnline && node.LastSeen >= cutoff
-            && !string.IsNullOrWhiteSpace(node.PublicHost))
+            && !string.IsNullOrWhiteSpace(node.PublicHost)
+            && IsAllowed(node.Id))
         .Select(node => new NodeExportEntry(
             node.Id,
             DecoratedNodeName(

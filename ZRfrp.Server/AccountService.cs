@@ -60,7 +60,7 @@ public sealed class AccountService
                 && Security.VerifyToken(refreshToken, item.RefreshTokenHash));
             if (session is null) return null;
             var account = Find(session.AccountId);
-            if (account is null || !account.Enabled) return null;
+            if (account is null || !account.Enabled || IsSubscriptionExpired(account)) return null;
             var configuredHours = _store.State.SessionHours > 0 ? _store.State.SessionHours : _options.SessionHours;
             var accessToken = Security.CreateSecret(32);
             var nextRefreshToken = Security.CreateSecret(48);
@@ -88,7 +88,8 @@ public sealed class AccountService
         {
             if (Security.VerifyToken(token, session.TokenHash))
             {
-                return _store.State.Accounts.FirstOrDefault(account => account.Id == session.AccountId && account.Enabled);
+                return _store.State.Accounts.FirstOrDefault(account =>
+                    account.Id == session.AccountId && account.Enabled && !IsSubscriptionExpired(account));
             }
         }
         return null;
@@ -98,4 +99,9 @@ public sealed class AccountService
 
     public bool IsQuotaExceeded(UserAccount account) =>
         account.TrafficQuotaBytes > 0 && account.TrafficUsedBytes >= account.TrafficQuotaBytes;
+
+    public bool IsSubscriptionExpired(UserAccount account) =>
+        account.Role.Equals("customer", StringComparison.OrdinalIgnoreCase)
+        && account.SubscriptionExpiresAt is { } expiresAt
+        && expiresAt <= DateTimeOffset.UtcNow;
 }

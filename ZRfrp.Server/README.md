@@ -12,6 +12,8 @@ curl -fsSL https://raw.githubusercontent.com/masZR-art/ZRfrp/main/ZRfrp.Server/d
 
 建议仅通过 HTTPS 反向代理公开 `7600` 面板端口。frps Dashboard 默认只监听 `127.0.0.1:7500`。
 
+支付宝支付的密钥、HTTPS 回调、沙箱和上线步骤见 [支付宝接入指南](ALIPAY.md)。
+
 ## 更新
 
 ```bash
